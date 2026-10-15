@@ -15,6 +15,27 @@ export type NavIconName =
   | 'woocommerce'
   | 'gold'
   | 'analytics'
+  | 'campaigns'
+  | 'surveys'
+  | 'users'
+  | 'gateway'
+  | 'sms'
+  | 'email'
+  | 'broadcast'
+  | 'supportTeam'
+  | 'adminDashboard'
+  | 'settingsGeneral'
+  | 'adminChannels'
+  | 'adminBots'
+  | 'adminPlans'
+  | 'adminPayments'
+  | 'adminTickets'
+  | 'adminSettings'
+  | 'adminAiSettings'
+  | 'adminGoldSettings'
+  | 'adminReferrals'
+  | 'adminSecurity'
+  | 'adminLogs'
   | 'clock'
   | 'subscription'
   | 'wallet'
@@ -36,8 +57,10 @@ const PATHS: Record<NavIconName, ReactElement> = {
   ),
   channels: (
     <>
-      <path d="M18 5 7.5 9.5H5a2 2 0 0 0-2 2v1.5a2 2 0 0 0 2 2h2.5L18 19V5Z" />
-      <path d="M8 15.3v3.2a1.5 1.5 0 0 0 3 0v-1.8" />
+      <circle cx="7" cy="7" r="3" />
+      <circle cx="17" cy="17" r="3" />
+      <path d="m9.2 9.2 5.6 5.6" />
+      <path d="M14.5 7H17v2.5M9.5 17H7v-2.5" />
     </>
   ),
   posts: (
@@ -87,11 +110,96 @@ const PATHS: Record<NavIconName, ReactElement> = {
   analytics: (
     <>
       <path d="M4 20h16" />
-      <path d="M6.5 20v-6" />
-      <path d="M12 20V6" />
-      <path d="M17.5 20v-9" />
+      <path d="M6 17.5v-5" />
+      <path d="M11.5 17.5V5" />
+      <path d="M17 17.5v-8" />
+      <path d="m5.2 9.5 5.7-4 5.7 4 2.2-2" />
     </>
   ),
+  campaigns: (
+    <>
+      <path d="M3 10v4a2 2 0 0 0 2 2h2.5L18 20V4L7.5 8H5a2 2 0 0 0-2 2Z" />
+      <path d="M7.5 16 9 21h3l-2-6.8" />
+      <path d="M20 9a4 4 0 0 1 0 6" />
+    </>
+  ),
+  surveys: (
+    <>
+      <rect x="5" y="3.5" width="14" height="17" rx="2" />
+      <path d="M9 8h6M9 12h6M9 16h3" />
+      <path d="m7 8 1 1 1.5-2M7 12l1 1 1.5-2" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19v-1.2a5.5 5.5 0 0 1 11 0V19Z" />
+      <path d="M16 5.5a3 3 0 0 1 0 5.8M17 14a4.7 4.7 0 0 1 3.5 4.6V19h-3" />
+    </>
+  ),
+  gateway: (
+    <>
+      <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
+      <path d="M3 9.5h18M7 15h4M16 15h2" />
+      <path d="m14.5 12.5 2 2-2 2" />
+    </>
+  ),
+  sms: (
+    <>
+      <path d="M4 5.5h16v11H9l-5 3v-14Z" />
+      <path d="M7.5 9h9M7.5 12.5h6" />
+    </>
+  ),
+  email: (
+    <>
+      <rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <path d="m3.5 7 8.5 6.5L20.5 7" />
+    </>
+  ),
+  broadcast: (
+    <>
+      <circle cx="12" cy="12" r="2" />
+      <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M5.5 5.5a9.2 9.2 0 0 0 0 13M18.5 5.5a9.2 9.2 0 0 1 0 13" />
+      <path d="M12 4v2M12 18v2" />
+    </>
+  ),
+  supportTeam: (
+    <>
+      <path d="M4 13v-1a8 8 0 0 1 16 0v1" />
+      <rect x="3" y="12" width="4" height="6" rx="2" />
+      <rect x="17" y="12" width="4" height="6" rx="2" />
+      <path d="M17 18a5 5 0 0 1-5 3h-1" />
+      <circle cx="12" cy="10" r="2.4" />
+    </>
+  ),
+  adminDashboard: (
+    <>
+      <rect x="3" y="3.5" width="8" height="7" rx="1.5" />
+      <rect x="13" y="3.5" width="8" height="4" rx="1.5" />
+      <rect x="13" y="9.5" width="8" height="11" rx="1.5" />
+      <rect x="3" y="12.5" width="8" height="8" rx="1.5" />
+    </>
+  ),
+  settingsGeneral: (
+    <>
+      <path d="M4 6h16M4 12h16M4 18h16" />
+      <circle cx="8" cy="6" r="2" fill="var(--surface)" />
+      <circle cx="15" cy="12" r="2" fill="var(--surface)" />
+      <circle cx="10" cy="18" r="2" fill="var(--surface)" />
+    </>
+  ),
+  adminChannels: (<><rect x="4" y="3.5" width="16" height="17" rx="2" /><path d="M8 7.5h7M8 11.5h4M8 15.5h3" /><circle cx="17" cy="15.5" r="2" /></>),
+  adminBots: (<><rect x="3.5" y="6.5" width="12" height="13" rx="3" /><path d="M9.5 3.5v3M6.5 11v2M12.5 11v2M7 16h5" /><circle cx="9.5" cy="2.8" r="1" /><path d="m18 10 3 1.3v3.4c0 2.3-1.3 3.8-3 4.8-1.7-1-3-2.5-3-4.8v-3.4L18 10Z" /></>),
+  adminPlans: (<><rect x="3.5" y="4" width="17" height="16" rx="2" /><path d="M7 8h6M7 12h4M7 16h3" /><path d="m16.5 10 .8 1.7 1.8.3-1.3 1.3.3 1.8-1.6-.9-1.6.9.3-1.8-1.3-1.3 1.8-.3.8-1.7Z" /></>),
+  adminPayments: (<><path d="M5 3.5h14v17l-3-1.8-4 1.8-4-1.8-3 1.8v-17Z" /><path d="M8 8h8M8 12h4" /><circle cx="16.5" cy="15.5" r="2.2" /></>),
+  adminTickets: (<><path d="M3.5 5.5h17v12h-10l-5 3v-15Z" /><path d="M7 9h10M7 12.5h6" /><path d="m14.5 15 1.5 1.5 2.5-3" /></>),
+  adminSettings: (<><path d="m12 3 1.4 2.2 2.6.5 1.1 2.4 2.3 1.4-.3 2.7.3 2.7-2.3 1.4-1.1 2.4-2.6.5L12 21l-1.4-2.2-2.6-.5-1.1-2.4-2.3-1.4.3-2.7-.3-2.7 2.3-1.4 1.1-2.4 2.6-.5L12 3Z" /><circle cx="12" cy="12" r="3" /></>),
+  adminAiSettings: (<><path d="M4 6h10M4 12h16M4 18h8" /><circle cx="17" cy="6" r="2" fill="var(--surface)" /><circle cx="9" cy="18" r="2" fill="var(--surface)" /><path d="m18 15 .8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2Z" /></>),
+  adminGoldSettings: (<><circle cx="10" cy="12" r="7" /><circle cx="10" cy="12" r="3" /><path d="m17 4 .7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7L17 4Z" /><path d="M19 13v5M16.5 15.5h5" /></>),
+  adminReferrals: (<><circle cx="8" cy="8" r="3" /><circle cx="17" cy="15.5" r="2.5" /><path d="M2.8 19v-1.2a5.2 5.2 0 0 1 10.4 0V19Z" /><path d="m13 7 3-2 2 2M15 5l1 7" /></>),
+  adminSecurity: (<><path d="M12 3 20 6v5.5c0 4.3-3.2 7.4-8 9.5-4.8-2.1-8-5.2-8-9.5V6l8-3Z" /><rect x="8.5" y="10.5" width="7" height="5.5" rx="1" /><path d="M10 10.5V8.8a2 2 0 1 1 4 0v1.7" /></>),
+  adminLogs: (<><path d="M5 3.5h10l4 4V21H5Z" /><path d="M15 3.5V8h4M8 12h7M8 15h3" /><path d="m8 18 2-1.5 2 1 3-2" /></>),
   clock: (
     <>
       <circle cx="12" cy="12" r="8.4" />

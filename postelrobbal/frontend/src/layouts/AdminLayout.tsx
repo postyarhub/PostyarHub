@@ -17,7 +17,7 @@ import '../styles/admin.css';
 /* off-canvas drawer (<1024px), own footer.                            */
 /* ------------------------------------------------------------------ */
 
-function AdminNav() {
+function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <>
       {ADMIN_SECTIONS.map((g) => (
@@ -29,7 +29,8 @@ function AdminNav() {
               to={s.to}
               end={s.end}
               className={({ isActive }) => `adm-nav__item${isActive ? ' is-active' : ''}`}
-              title={s.label}
+              data-tooltip={collapsed ? s.label : undefined}
+              aria-label={s.label}
             >
               <NavIcon name={s.icon} size={19} />
               <span className="adm-nav__label">{s.label}</span>
@@ -50,7 +51,20 @@ export default function AdminLayout() {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return window.localStorage.getItem('postyar-admin-sidebar-collapsed') === '1'; }
+    catch { return false; }
+  });
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('postyar-admin-sidebar-collapsed', sidebarCollapsed ? '1' : '0');
+    } catch {
+      // Collapse still works for the current session when storage is unavailable.
+    }
+  }, [sidebarCollapsed]);
 
   // Close the drawer on route change (nav inside the drawer included).
   useEffect(() => {
@@ -103,7 +117,7 @@ export default function AdminLayout() {
   const drawerVisible = drawerOpen || drawerClosing;
 
   return (
-    <div className="adm-root">
+    <div className={`adm-root${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
       <header className="adm-topbar">
         <div className="adm-topbar__id">
           <button
@@ -155,9 +169,25 @@ export default function AdminLayout() {
       </header>
 
       <div className="adm-body">
-        <aside className="adm-sidebar">
+        <aside className="adm-sidebar" aria-label="ناوبری اصلی مدیریت">
+          <div className="adm-sidebar__head">
+            {!sidebarCollapsed && <span className="adm-sidebar__brand">پُست‌یار</span>}
+            <button
+              type="button"
+              className="adm-sidebar__toggle"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+              aria-label={sidebarCollapsed ? 'گسترش نوار کناری مدیریت' : 'جمع کردن نوار کناری مدیریت'}
+              aria-expanded={!sidebarCollapsed}
+              title={sidebarCollapsed ? 'گسترش نوار کناری' : 'جمع کردن نوار کناری'}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {sidebarCollapsed ? <path d="m9 5 7 7-7 7" /> : <path d="m15 5-7 7 7 7" />}
+              </svg>
+              {!sidebarCollapsed && <span>جمع کردن</span>}
+            </button>
+          </div>
           <nav className="adm-nav" aria-label="بخش‌های پنل مدیریت">
-            <AdminNav />
+            <AdminNav collapsed={sidebarCollapsed} />
           </nav>
         </aside>
 

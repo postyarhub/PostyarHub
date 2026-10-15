@@ -101,8 +101,8 @@
 .adm-body {
   flex: 1;
   width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -152,10 +152,36 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 .adm-nav__item svg { flex-shrink: 0; opacity: 0.85; }
+.adm-nav__item:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.adm-nav__item[data-tooltip] { position: relative; }
+.adm-nav__item[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  inset-inline-end: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 200;
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: var(--text);
+  color: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+.adm-nav__item[data-tooltip]:hover::after,
+.adm-nav__item[data-tooltip]:focus-visible::after { opacity: 1; visibility: visible; }
 .adm-nav__item:hover { background: var(--surface-2); color: var(--text); }
 .adm-nav__item.is-active { background: var(--brand-soft); color: var(--brand-strong); font-weight: 700; }
 .adm-nav__item.is-active svg { opacity: 1; }
 .adm-nav__short { display: none; }
+.adm-sidebar__head { display: none; }
 
 /* ---------------- off-canvas drawer (<1024px) ---------------- */
 /* Slides in from the RIGHT (RTL natural). Closes on route change,
@@ -591,27 +617,32 @@
 
 @media (min-width: 1024px) {
   .adm-burger { display: none; }
-  .adm-body {
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 18px;
-    padding: 18px clamp(16px, 3vw, 28px) 28px;
-  }
-  .adm-main { padding: 0; }
+  .adm-body { flex-direction: row; align-items: stretch; gap: 0; padding: 18px 0 28px; }
+  .adm-main { padding: 0 22px; }
   .adm-sidebar {
-    display: block;
-    position: sticky;
-    top: 76px;
-    width: 248px;
-    flex-shrink: 0;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: 10px;
-    max-height: calc(100dvh - 100px);
-    overflow-y: auto;
+    display: block; position: sticky; top: 76px; width: 260px; flex: 0 0 260px;
+    box-sizing: border-box; min-width: 0; align-self: flex-start;
+    height: calc(100dvh - 76px); max-height: calc(100dvh - 76px);
+    overflow-y: auto; overflow-x: visible; background: var(--surface);
+    border: 1px solid var(--border); border-inline-start: 0;
+    border-radius: 0 0 0 var(--radius); box-shadow: var(--shadow); padding: 10px;
+    transition: width 180ms ease, flex-basis 180ms ease;
   }
+  .adm-sidebar__head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:42px; padding:0 6px 10px; margin-bottom:8px; border-bottom:1px solid var(--border); }
+  .adm-sidebar__brand { font-size:13px; font-weight:900; color:var(--text); }
+  .adm-sidebar__toggle { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-width:36px; min-height:36px; padding:0 8px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text-2); cursor:pointer; font:inherit; font-size:11.5px; font-weight:750; white-space:nowrap; }
+  .adm-sidebar__toggle:hover { color:var(--brand-strong); background:var(--surface-2); border-color:var(--brand); }
+  .adm-sidebar__toggle:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .adm-root.is-sidebar-collapsed .adm-sidebar { width:78px; flex-basis:78px; padding:10px 6px; }
+  .adm-root.is-sidebar-collapsed .adm-sidebar__head { justify-content:center; padding-inline:0; }
+  .adm-root.is-sidebar-collapsed .adm-sidebar__toggle { padding:0; }
+  .adm-root.is-sidebar-collapsed .adm-sidebar__toggle span,
+  .adm-root.is-sidebar-collapsed .adm-sidebar__brand,
+  .adm-root.is-sidebar-collapsed .adm-sidebar .adm-group__title,
+  .adm-root.is-sidebar-collapsed .adm-sidebar .adm-nav__label,
+  .adm-root.is-sidebar-collapsed .adm-sidebar .adm-nav__short { display:none; }
+  .adm-root.is-sidebar-collapsed .adm-sidebar .adm-group + .adm-group { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
+  .adm-root.is-sidebar-collapsed .adm-sidebar .adm-nav__item { justify-content:center; gap:0; padding-inline:6px; }
 }
 
 /* ===== round 18-b: admin bell + topbar clock ===== */
