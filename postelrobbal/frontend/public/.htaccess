@@ -52,7 +52,30 @@ ErrorDocument 404 /404.html
   ExpiresByType text/css "access plus 1 year"
   ExpiresByType application/javascript "access plus 1 year"
   ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType image/x-icon "access plus 1 year"
   ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType application/manifest+json "access plus 1 day"
+</IfModule>
+
+# POSTYAR-PERFORMANCE-COMPRESSION-CACHING-R1
+# Compress text payloads only. If Brotli is unavailable, mod_deflate is the fallback.
+<IfModule mod_brotli.c>
+  AddOutputFilterByType BROTLI_COMPRESS text/html text/plain text/css text/xml
+  AddOutputFilterByType BROTLI_COMPRESS application/javascript text/javascript application/json application/manifest+json application/xml
+  AddOutputFilterByType BROTLI_COMPRESS image/svg+xml
+</IfModule>
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+  AddOutputFilterByType DEFLATE application/javascript text/javascript application/json application/manifest+json application/xml
+  AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+<IfModule mod_headers.c>
+  Header append Vary Accept-Encoding
+  <FilesMatch "\\-[A-Za-z0-9_-]{8,}\\.(js|css|webp|woff2|svg|png|jpe?g|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
 </IfModule>
 
 # Browser-side hardening.
