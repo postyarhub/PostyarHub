@@ -1,0 +1,20 @@
+$kind: http-example
+name: '200 OK'
+request:
+  url: '{{base_url}}/api/v1/templates/preview'
+  method: POST
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    - key: content-type
+      value: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "success": true,
+        "data": {
+          "preview": "🔥 کفش اسپرت روزمره\n\nسبک، راحت و مناسب استفاده روزانه با ارسال سریع.\n\n💰 ۱٬۱۹۰٬۰۰۰ تومان\n🔗 https://example.com/sample-product"
+        }
+      }

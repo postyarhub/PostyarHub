@@ -1,0 +1,627 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../../lib/api';
+import { Badge, Card, EmptyState, PageLoading } from '../../components/ui';
+import { NavIcon } from '../../components/icons';
+import {
+  PLATFORM_FA,
+  faFileSize,
+  faMoney,
+  faNumber,
+} from '../../lib/format';
+import { useToast } from '../../lib/toast';
+import {
+  ADMIN_SECTIONS_FLAT,
+  PlatformIcon,
+  errText,
+  type AdminOverview,
+} from './shared';
+
+type PF = 'telegram' | 'bale' | 'rubika';
+
+interface AdminAnalytics {
+  events: {
+    total: number;
+    sent: number;
+    failed: number;
+  };
+  successRate: number;
+  platforms: Record<string, { sent: number; failed: number }>;
+  revenue: {
+    paymentsCompletedRial: number;
+    subscriptionRevenueRial: number;
+    paymentsCompleted: number;
+    subscriptionsRenewed: number;
+  };
+  automation: {
+    ai: {
+      requested: number;
+      completed: number;
+      failed: number;
+      successRate: number;
+    };
+    workflows: {
+      started: number;
+      completed: number;
+      failed: number;
+      successRate: number;
+    };
+  };
+  links: { clicks: number };
+}
+
+function Bar({
+  value,
+  max,
+  tone = 'brand',
+}: {
+  value: number;
+  max: number;
+  tone?: 'brand' | 'success' | 'danger';
+}) {
+  const width =
+    max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+
+  return (
+    <div className="admin-v3-bar">
+      <span
+        className={`admin-v3-bar__fill admin-v3-bar__fill--${tone}`}
+        style={{ width: `${width}%` }}
+      />
+    </div>
+  );
+}
+
+function KPI({
+  to,
+  icon,
+  label,
+  value,
+  meta,
+}: {
+  to?: string;
+  icon: string;
+  label: string;
+  value: string;
+  meta?: string;
+}) {
+  const content = (
+    <Card className="admin-v3-kpi">
+      <div className="admin-v3-kpi__head">
+        <span>{icon}</span>
+        {to ? <small>مشاهده جزئیات ←</small> : null}
+      </div>
+      <strong>{value}</strong>
+      <b>{label}</b>
+      {meta ? <em>{meta}</em> : null}
+    </Card>
+  );
+
+  return to ? (
+    <Link to={to} className="admin-v3-kpi-link">
+      {content}
+    </Link>
+  ) : (
+    content
+  );
+}
+
+export default function AdminHome() {
+  const toast = useToast();
+  const [data, setData] = useState<AdminOverview | null>(null);
+  const [analytics, setAnalytics] =
+    useState<AdminAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      const [overviewResult, analyticsResult] =
+        await Promise.allSettled([
+          api.get<AdminOverview>('/api/v1/admin/overview'),
+          api.get<AdminAnalytics>(
+            '/api/v1/admin/analytics/overview?days=30',
+          ),
+        ]);
+
+      if (!alive) return;
+
+      if (overviewResult.status === 'fulfilled') {
+        setData(overviewResult.value);
+      } else {
+        toast.error(
+          errText(
+            overviewResult.reason,
+            'دریافت آمار مدیریتی ناموفق بود.',
+          ),
+        );
+      }
+
+      if (analyticsResult.status === 'fulfilled') {
+        setAnalytics(analyticsResult.value);
+      } else {
+        toast.error(
+          errText(
+            analyticsResult.reason,
+            'دریافت هستهٔ تحلیلی ناموفق بود.',
+          ),
+        );
+      }
+
+      setLoading(false);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [toast]);
+
+  const plans = data?.subscriptions?.byPlan ?? [];
+  const planTotal = data?.subscriptions?.active ?? 0;
+  const maxPlan = Math.max(1, ...plans.map((p) => p.count));
+
+  const pfData = useMemo(() => {
+    const channels = data?.channels?.byPlatform;
+    const bots = data?.bots?.byPlatform;
+
+    return (['telegram', 'bale', 'rubika'] as PF[]).map(
+      (platform) => ({
+        platform,
+        channels:
+          channels?.[platform] ??
+          {
+            total: data?.channels?.[platform] ?? 0,
+            active: 0,
+            inactive: 0,
+          },
+        bots:
+          bots?.[platform] ??
+          {
+            total: data?.bots?.[platform] ?? 0,
+            active: 0,
+            inactive: 0,
+          },
+      }),
+    );
+  }, [data]);
+
+  if (loading) {
+    return <PageLoading />;
+  }
+
+  return (
+    <div className="admin-v3-page">
+      <header className="admin-v3-hero">
+        <div>
+          <span>مرکز مدیریت</span>
+          <h1>داشبورد مدیریتی</h1>
+          <p>
+            نمای عملیاتی کاربران، اتصال پلتفرم‌ها، اشتراک، درآمد و
+            هستهٔ تحلیل مشترک.
+          </p>
+        </div>
+        <Badge tone="brand">۳۰ روز اخیر</Badge>
+      </header>
+
+      <section className="admin-v3-kpis">
+        <KPI
+          to="/dashboard/admin/users"
+          icon="👥"
+          label="کاربران کل"
+          value={faNumber(data?.users?.total ?? 0)}
+          meta={`فعال ${faNumber(
+            data?.users?.active ?? 0,
+          )} · جدید ۳۰ روز ${faNumber(
+            data?.users?.new30d ?? 0,
+          )}`}
+        />
+
+        <KPI
+          to="/dashboard/admin/users"
+          icon="✅"
+          label="کاربران فعال"
+          value={faNumber(data?.users?.active ?? 0)}
+          meta={`تعلیق‌شده ${faNumber(
+            data?.users?.suspended ?? 0,
+          )}`}
+        />
+
+        <KPI
+          to="/dashboard/admin/payments"
+          icon="💳"
+          label="درآمد تأییدشده ۳۰ روز"
+          value={faMoney(
+            data?.payments?.verifiedSum30d ?? 0,
+          )}
+          meta={`تعداد پرداخت ${faNumber(
+            data?.payments?.verifiedCount30d ?? 0,
+          )}`}
+        />
+
+        <KPI
+          to="/dashboard/admin/plans"
+          icon="💎"
+          label="اشتراک فعال"
+          value={faNumber(
+            data?.subscriptions?.active ?? 0,
+          )}
+          meta="توزیع اشتراک‌ها در پایین صفحه"
+        />
+      </section>
+
+      <section className="admin-v3-two-col">
+        {(['channels', 'bots'] as const).map((kind) => (
+          <Card key={kind} className="admin-v3-resource">
+            <div className="admin-v3-resource__head">
+              <div>
+                <h2>
+                  {kind === 'channels'
+                    ? 'کانال‌ها'
+                    : 'ربات‌ها'}
+                </h2>
+                <p>
+                  وضعیت فعال و غیرفعال، با تفکیک پلتفرم.
+                </p>
+              </div>
+
+              <Link
+                to={
+                  kind === 'channels'
+                    ? '/dashboard/admin/channels'
+                    : '/dashboard/admin/bots'
+                }
+              >
+                مدیریت ←
+              </Link>
+            </div>
+
+            <div className="admin-v3-platforms">
+              {pfData.map((item) => {
+                const value = item[kind];
+
+                return (
+                  <div
+                    key={item.platform}
+                    className="admin-v3-platform-card"
+                  >
+                    <div className="admin-v3-platform-card__head">
+                      <PlatformIcon
+                        platform={item.platform}
+                        size={21}
+                      />
+                      <strong>
+                        {PLATFORM_FA[item.platform]}
+                      </strong>
+                    </div>
+
+                    <b>{faNumber(value.total)}</b>
+
+                    <div className="admin-v3-badges">
+                      <Badge tone="success">
+                        فعال {faNumber(value.active)}
+                      </Badge>
+                      <Badge tone="muted">
+                        غیرفعال {faNumber(value.inactive)}
+                      </Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        ))}
+      </section>
+
+      <Card className="admin-v3-core">
+        <div className="admin-v3-resource__head">
+          <div>
+            <h2>هستهٔ تحلیلی مشترک</h2>
+            <p>
+              شاخص‌های محتوا، ارسال، درآمد و هوشمندسازی در ۳۰ روز
+              اخیر.
+            </p>
+          </div>
+
+          <Link to="/dashboard/analytics">
+            مشاهده تحلیل کامل ←
+          </Link>
+        </div>
+
+        {analytics ? (
+          <>
+            <div className="admin-v3-core-kpis">
+              <Link to="/dashboard/analytics">
+                <span>📚</span>
+                <strong>
+                  {faNumber(analytics.events.total)}
+                </strong>
+                <b>کل رویدادها</b>
+              </Link>
+
+              <Link to="/dashboard/analytics">
+                <span>✅</span>
+                <strong>
+                  {faNumber(analytics.events.sent)}
+                </strong>
+                <b>ارسال موفق</b>
+              </Link>
+
+              <Link to="/dashboard/analytics">
+                <span>⚠️</span>
+                <strong>
+                  {faNumber(analytics.events.failed)}
+                </strong>
+                <b>خطای ارسال</b>
+              </Link>
+
+              <Link to="/dashboard/analytics">
+                <span>🔗</span>
+                <strong>
+                  {faNumber(analytics.links.clicks)}
+                </strong>
+                <b>کلیک لینک</b>
+              </Link>
+            </div>
+
+            <div className="admin-v3-core-main">
+              <div className="admin-v3-core-box">
+                <div className="admin-v3-box-title">
+                  <strong>عملکرد پلتفرم‌ها</strong>
+                  <span>
+                    نرخ موفقیت کلی{' '}
+                    {faNumber(analytics.successRate)}٪
+                  </span>
+                </div>
+
+                <div className="admin-v3-platform-bars">
+                  {(
+                    [
+                      'telegram',
+                      'bale',
+                      'rubika',
+                      'wordpress',
+                    ] as const
+                  ).map((platform) => {
+                    const item =
+                      analytics.platforms?.[platform] ?? {
+                        sent: 0,
+                        failed: 0,
+                      };
+
+                    const sent = Number(item.sent ?? 0);
+                    const failed = Number(item.failed ?? 0);
+                    const total = sent + failed;
+
+                    return (
+                      <div key={platform}>
+                        <div className="admin-v3-platform-line">
+                          <span>
+                            {PLATFORM_FA[platform]}
+                          </span>
+                          <b>{faNumber(total)}</b>
+                        </div>
+
+                        <Bar
+                          value={sent}
+                          max={Math.max(1, total)}
+                          tone="success"
+                        />
+
+                        <div className="admin-v3-platform-meta">
+                          <span>
+                            موفق {faNumber(sent)}
+                          </span>
+                          <span>
+                            خطا {faNumber(failed)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="admin-v3-core-box admin-v3-summary-box">
+                <div className="admin-v3-box-title">
+                  <strong>درآمد و هوشمندسازی</strong>
+                  <span>نمای فشرده و قابل خواندن</span>
+                </div>
+
+                <div className="admin-v3-summary-grid">
+                  <div>
+                    <span>درآمد موفق</span>
+                    <b>
+                      {faMoney(
+                        analytics.revenue
+                          .paymentsCompletedRial,
+                      )}
+                    </b>
+                  </div>
+
+                  <div>
+                    <span>تمدید اشتراک</span>
+                    <b>
+                      {faNumber(
+                        analytics.revenue
+                          .subscriptionsRenewed,
+                      )}
+                    </b>
+                  </div>
+
+                  <div>
+                    <span>تکمیل هوش مصنوعی</span>
+                    <b>
+                      {faNumber(
+                        analytics.automation.ai.completed,
+                      )}
+                    </b>
+                  </div>
+
+                  <div>
+                    <span>تکمیل گردش‌کار</span>
+                    <b>
+                      {faNumber(
+                        analytics.automation.workflows.completed,
+                      )}
+                    </b>
+                  </div>
+                </div>
+
+                <div className="admin-v3-success-row">
+                  <span>نرخ موفقیت هوش مصنوعی</span>
+                  <b>
+                    {faNumber(
+                      analytics.automation.ai.successRate,
+                    )}٪
+                  </b>
+                </div>
+
+                <div className="admin-v3-success-row">
+                  <span>نرخ موفقیت گردش‌کار</span>
+                  <b>
+                    {faNumber(
+                      analytics.automation.workflows
+                        .successRate,
+                    )}٪
+                  </b>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <EmptyState
+            icon="📊"
+            title="داده تحلیل در دسترس نیست"
+            description="پس از ثبت فعالیت‌های جدید، شاخص‌های تحلیلی نمایش داده می‌شوند."
+          />
+        )}
+      </Card>
+
+      <section className="admin-v3-two-col">
+        <Card>
+          <div className="admin-v3-resource__head">
+            <div>
+              <h2>اشتراک‌های فعال</h2>
+              <p>توزیع تعداد اشتراک‌ها بین پلن‌های فعال.</p>
+            </div>
+            <Badge tone="brand">
+              {faNumber(planTotal)} فعال
+            </Badge>
+          </div>
+
+          {plans.length === 0 ? (
+            <EmptyState
+              icon="💎"
+              title="اشتراک فعالی نیست"
+              description="پس از فعال‌شدن اشتراک‌ها، توزیع پلن‌ها نمایش داده می‌شود."
+            />
+          ) : (
+            <div className="admin-v3-plan-list">
+              {plans.map((plan) => (
+                <div key={plan.planName}>
+                  <div>
+                    <strong>{plan.planName}</strong>
+                    <span>
+                      {faNumber(plan.count)} ·{' '}
+                      {planTotal
+                        ? faNumber(
+                            Math.round(
+                              (plan.count / planTotal) * 100,
+                            ),
+                          )
+                        : 0}
+                      ٪
+                    </span>
+                  </div>
+
+                  <Bar
+                    value={plan.count}
+                    max={maxPlan}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <div className="admin-v3-resource__head">
+            <div>
+              <h2>عملکرد و مصرف</h2>
+              <p>شاخص‌های عملیاتی اصلی سامانه.</p>
+            </div>
+            <Link to="/dashboard/posts">
+              مشاهده پست‌ها ←
+            </Link>
+          </div>
+
+          <div className="admin-v3-usage-grid">
+            <div>
+              <span>کل پست‌ها</span>
+              <b>
+                {faNumber(data?.posts?.total ?? 0)}
+              </b>
+            </div>
+
+            <div>
+              <span>منتشرشده در ۳۰ روز</span>
+              <b>
+                {faNumber(data?.posts?.published30d ?? 0)}
+              </b>
+            </div>
+
+            <div>
+              <span>ارسال موفق ۲۴ ساعت</span>
+              <b>
+                {faNumber(data?.usage?.deliveries24h ?? 0)}
+              </b>
+            </div>
+
+            <div>
+              <span>ارسال ناموفق ۲۴ ساعت</span>
+              <b>
+                {faNumber(
+                  data?.usage?.deliveriesFailed24h ?? 0,
+                )}
+              </b>
+            </div>
+
+            <div>
+              <span>حجم رسانه</span>
+              <b>
+                {faFileSize(data?.usage?.mediaBytes ?? 0)}
+              </b>
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <Card>
+        <div className="admin-v3-resource__head">
+          <div>
+            <h2>دسترسی سریع</h2>
+            <p>ورود مستقیم به بخش‌های مدیریتی.</p>
+          </div>
+        </div>
+
+        <div className="admin-v3-quick">
+          {ADMIN_SECTIONS_FLAT.filter((item) => !item.end).map(
+            (item) => (
+              <Link
+                key={item.to}
+                to={item.to}
+                className="admin-v3-quick__item"
+              >
+                <span>
+                  <NavIcon name={item.icon} size={18} />
+                </span>
+                <b>{item.label}</b>
+              </Link>
+            ),
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}

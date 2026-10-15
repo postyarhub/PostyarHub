@@ -1,0 +1,38 @@
+/* Dedicated responsive full-page authentication. The existing AuthModal owns all secure form and CAPTCHA logic. */
+.auth-entry{position:relative;isolation:isolate;min-height:100svh;overflow:hidden;background:radial-gradient(40rem 30rem at 82% 18%,rgba(72,111,255,.13),transparent 70%),linear-gradient(130deg,#fff 0%,#f4f7ff 52%,#eef4ff 100%);color:#10234a;padding:1.25rem clamp(.85rem,3vw,2.5rem) 1.1rem;display:flex;flex-direction:column}
+.auth-entry__ambient{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.auth-entry__ambient span{position:absolute;display:block;border-radius:50%;filter:blur(1px);border:1px solid rgba(73,111,244,.16);animation:authOrbit 17s ease-in-out infinite alternate}
+.auth-entry__ambient span:nth-child(1){width:28rem;height:28rem;inset-inline-end:-12rem;top:5rem;box-shadow:inset 0 0 4rem rgba(40,87,245,.06)}
+.auth-entry__ambient span:nth-child(2){width:18rem;height:18rem;inset-inline-start:-8rem;bottom:-5rem;animation-delay:-5s}
+.auth-entry__ambient span:nth-child(3){width:8rem;height:8rem;inset-inline-start:38%;top:15%;animation-delay:-9s}
+@keyframes authOrbit{to{transform:translate3d(-1rem,1.5rem,0) rotate(12deg)}}
+.auth-entry__header{max-width:80rem;width:100%;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:1rem;min-height:3.5rem}
+.auth-entry__brand{display:inline-flex;align-items:center;gap:.55rem;color:#10234a;text-decoration:none;font-size:1.15rem;font-weight:900}
+.auth-entry__back{display:inline-flex;gap:.5rem;align-items:center;color:#38527f;text-decoration:none;font-size:.88rem;font-weight:750}
+.auth-entry__main{width:100%;max-width:76rem;margin:auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(22rem,.82fr);align-items:center;gap:clamp(2rem,5vw,5rem);padding:clamp(1rem,4vw,3.25rem) 0}
+.auth-entry__story{min-width:0;direction:rtl}
+.auth-entry__eyebrow{display:inline-flex;background:#edf3ff;color:#2857f5;border:1px solid #d6e2ff;padding:.35rem .8rem;border-radius:999px;font-size:.8rem;font-weight:850}
+.auth-entry__story h1{margin:1rem 0 .65rem;font-size:clamp(2rem,4vw,3.5rem);line-height:1.5;color:#10234a}
+.auth-entry__story>p{color:#5b6d8e;line-height:2.1;max-width:37rem}
+.auth-entry__visual{position:relative;margin-top:1.5rem;padding:.5rem;border:1px solid rgba(255,255,255,.9);border-radius:1.4rem;background:rgba(255,255,255,.68);box-shadow:0 1.3rem 3rem rgba(28,56,128,.11)}
+.auth-entry__visual img{display:block;width:100%;height:auto;border-radius:1rem;aspect-ratio:1.6/1;object-fit:cover;object-position:top center}
+.auth-entry__visual-chip{position:absolute;inset-inline-start:1rem;bottom:1rem;display:inline-flex;align-items:center;gap:.45rem;background:rgba(255,255,255,.94);border:1px solid #dfe8fb;color:#173260;padding:.5rem .8rem;border-radius:.8rem;font-size:.76rem;font-weight:850;box-shadow:0 .5rem 1.4rem rgba(20,45,99,.1)}
+.auth-entry__visual-chip i{display:block;width:.5rem;height:.5rem;border-radius:50%;background:#13bfa0}
+.auth-entry__trust{display:flex;gap:.55rem;align-items:center;color:#546a8e;font-size:.82rem;margin-top:1rem}
+.auth-entry__trust span{width:1.4rem;height:1.4rem;border-radius:.5rem;background:#dbf8ef;color:#087c68;display:grid;place-items:center;font-weight:900}
+.auth-entry__form{min-width:0;width:100%}
+.auth-entry__form .modal-overlay{position:relative;inset:auto;display:flex;width:100%;min-height:0;padding:0;background:transparent;backdrop-filter:none;z-index:1;align-items:center;justify-content:center}
+.auth-entry__form .modal{width:100%;max-width:35rem;max-height:calc(100svh - 7rem);overflow:auto;padding:clamp(1.1rem,2.5vw,1.65rem);border:1px solid #e0e8fb;border-radius:1.3rem;box-shadow:0 1.5rem 4rem rgba(28,56,128,.12);animation:none}
+.auth-entry__footer{display:flex;justify-content:center;align-items:center;gap:1.25rem;flex-wrap:wrap;border-top:1px solid rgba(200,215,245,.72);padding-top:1rem;color:#7584a0;font-size:.75rem}
+.auth-entry__footer a{color:#536b92;text-decoration:none}
+.auth-entry__footer a:hover{color:#2857f5}
+@media(max-width:62rem){.auth-entry__main{grid-template-columns:minmax(0,1fr) minmax(19rem,.95fr);gap:1.5rem}}
+@media(max-width:48rem){.auth-entry{padding:.8rem .8rem 1rem}.auth-entry__main{grid-template-columns:minmax(0,1fr);gap:1rem;max-width:35rem;padding:1.5rem 0}.auth-entry__story h1{font-size:clamp(1.8rem,7vw,2.5rem);margin:.7rem 0 .4rem}.auth-entry__story>p{font-size:.9rem;margin:.3rem 0}.auth-entry__visual{display:none}.auth-entry__trust{margin:.65rem 0}.auth-entry__form .modal{max-height:min(72svh,45rem);overflow:auto}.auth-entry__footer{gap:.8rem}}
+@media(max-width:36rem){.auth-entry__header{gap:.45rem}.auth-entry__brand{font-size:1rem}.auth-entry__back{font-size:.76rem}.auth-entry__footer{font-size:.7rem}}
+@media(max-width:23rem){.auth-entry__header{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.auth-entry__ambient span{animation:none!important}}
+/* The shared AuthModal locks document scrolling by default; on this dedicated
+   route keep the page itself scrollable so the header, form and legal footer
+   remain reachable on short mobile viewports. The existing modal content still
+   has its own bounded scroll area. */
+body:has(.auth-entry){overflow:auto!important}

@@ -1,0 +1,9 @@
+$kind: collection
+name: PostYar Analytics
+variables:
+  - key: base_url
+    value: 'https://postyarhub.ir/api/v1'
+    description: 'PostYar API base URL'
+  - key: access_token
+    value: 'REPLACE_WITH_RUNTIME_TOKEN'
+    description: 'Runtime authentication token; never commit a real credential.'

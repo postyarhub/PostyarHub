@@ -1,0 +1,40 @@
+$kind: http-example
+name: '200 OK'
+request:
+  url: '{{base_url}}/api/v1/analytics/automation?days=30'
+  method: GET
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    - key: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "success": true,
+        "data": {
+          "days": 30,
+          "automation": {
+            "ai": {
+              "requested": 20,
+              "completed": 18,
+              "failed": 2,
+              "successRate": 0.9,
+              "tokens": 12450,
+              "avgDurationMs": 1380
+            },
+            "workflows": {
+              "started": 14,
+              "completed": 12,
+              "failed": 2,
+              "successRate": 0.8571,
+              "avgDurationMs": 920
+            },
+            "errors": [
+              {"eventType": "ai.failed", "errorCode": "AI_PROVIDER_ERROR", "count": 2}
+            ]
+          }
+        }
+      }

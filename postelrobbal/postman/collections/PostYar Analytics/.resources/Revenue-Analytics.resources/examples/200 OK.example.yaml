@@ -1,0 +1,34 @@
+$kind: http-example
+name: '200 OK'
+request:
+  url: '{{base_url}}/analytics/revenue?days=30'
+  method: GET
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    - key: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "success": true,
+        "data": {
+          "days": 30,
+          "revenue": {
+            "paymentsCreated": 12,
+            "paymentsCompleted": 9,
+            "paymentsCompletedRial": 48000000,
+            "subscriptionRevenueRial": 35000000,
+            "walletTopupRial": 13000000,
+            "paymentsFailed": 2,
+            "subscriptionsCreated": 6,
+            "subscriptionsRenewed": 3,
+            "subscriptionsExpired": 1,
+            "referralsCreated": 4,
+            "referralRewardEvents": 4,
+            "referralRewardPoints": 1200
+          }
+        }
+      }

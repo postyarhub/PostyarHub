@@ -1,0 +1,2 @@
+ALTER TABLE wordpress_sites
+  ADD COLUMN IF NOT EXISTS send_image TINYINT NOT NULL DEFAULT 1 AFTER auto_publish;

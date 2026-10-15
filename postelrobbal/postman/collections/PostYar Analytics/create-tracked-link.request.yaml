@@ -1,0 +1,21 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/analytics/links'
+order: 5000
+headers:
+  - key: Accept
+    value: application/json
+  - key: Content-Type
+    value: application/json
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+body:
+  type: json
+  content: |-
+    {
+      "destinationUrl": "https://example.com/product/demo",
+      "source": "telegram"
+    }

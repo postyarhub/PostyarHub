@@ -1,0 +1,170 @@
+/*
+ * Postyar Connector — admin styles (Persian RTL, Postyar brand accent #6366f1).
+ */
+
+.pyc-wrap {
+	max-width: 1080px;
+}
+
+.pyc-title .dashicons {
+	font-size: 26px;
+	width: 26px;
+	height: 26px;
+	vertical-align: middle;
+	margin-left: 6px;
+	color: #6366f1;
+}
+
+.pyc-sub {
+	color: #4b5563;
+	margin-top: -4px;
+}
+
+.pyc-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+	margin-top: 12px;
+}
+
+@media screen and (max-width: 1100px) {
+	.pyc-grid {
+		grid-template-columns: 1fr;
+	}
+}
+
+.pyc-card {
+	background: #fff;
+	border: 1px solid #e5e7eb;
+	border-radius: 10px;
+	padding: 16px 20px 20px;
+	box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
+}
+
+.pyc-card h2 {
+	margin-top: 4px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid #eef2ff;
+	color: #3730a3;
+}
+
+.pyc-status {
+	margin: 10px 0 0;
+}
+
+.pyc-status li {
+	margin-bottom: 8px;
+	line-height: 1.9;
+}
+
+.pyc-label {
+	display: inline-block;
+	min-width: 150px;
+	color: #6b7280;
+	font-weight: 600;
+}
+
+.pyc-error-text {
+	color: #b91c1c;
+	font-weight: 600;
+}
+
+.pyc-form label {
+	display: inline-block;
+	margin-bottom: 4px;
+	font-weight: 600;
+}
+
+.pyc-form p {
+	margin-bottom: 14px;
+}
+
+.pyc-form .description {
+	display: block;
+	color: #6b7280;
+	line-height: 1.8;
+}
+
+.pyc-form input[type="text"],
+.pyc-form input[type="url"],
+.pyc-form input[type="password"] {
+	max-width: 420px;
+}
+
+.pyc-cats {
+	border: 1px solid #eef2ff;
+	border-radius: 8px;
+	padding: 10px 12px;
+	margin-bottom: 14px;
+	background: #fafaff;
+}
+
+.pyc-cat-list {
+	margin: 8px 0 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+	gap: 4px 12px;
+	max-height: 220px;
+	overflow: auto;
+}
+
+.pyc-cat-list label {
+	font-weight: 400;
+}
+
+.pyc-progress {
+	color: #4338ca;
+	font-weight: 600;
+	min-height: 22px;
+	margin: 8px 0;
+}
+
+.pyc-result {
+	border-radius: 8px;
+	padding: 10px 12px;
+	min-height: 20px;
+	line-height: 1.9;
+}
+
+.pyc-result:empty {
+	padding: 0;
+}
+
+.pyc-result-ok {
+	background: #ecfdf5;
+	border: 1px solid #a7f3d0;
+	color: #065f46;
+}
+
+.pyc-result-err {
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	color: #b91c1c;
+}
+
+.pyc-warning {
+	border-color: #fde68a;
+	background: #fffbeb;
+}
+
+.pyc-warning h2 {
+	border-bottom-color: #fde68a;
+	color: #92400e;
+}
+
+.pyc-warning p {
+	color: #78350f;
+}
+
+/* Button accent */
+.pyc-wrap .button-primary {
+	background: #6366f1;
+	border-color: #4f46e5;
+	text-shadow: none;
+}
+
+.pyc-wrap .button-primary:hover,
+.pyc-wrap .button-primary:focus {
+	background: #4f46e5;
+	border-color: #4338ca;
+}

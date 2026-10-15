@@ -1,0 +1,28 @@
+$kind: http-example
+name: '200 Analytics Summary'
+request:
+  url: '{{base_url}}/analytics/summary?days=30'
+  method: GET
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    - key: Content-Type
+      value: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "success": true,
+        "data": {
+          "days": 30,
+          "events": { "total": 0, "sent": 0, "failed": 0 },
+          "successRate": null,
+          "daily": [],
+          "platforms": {},
+          "topPosts": [],
+          "topCampaigns": [],
+          "errors": [],
+          "links": { "clicks": 0 }
+        }
+      }

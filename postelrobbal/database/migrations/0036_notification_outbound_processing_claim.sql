@@ -1,0 +1,5 @@
+ALTER TABLE notification_outbound
+  MODIFY COLUMN state ENUM('PENDING','PROCESSING','SENT','FAILED','SKIPPED') NOT NULL DEFAULT 'PENDING',
+  ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at;
+
+CREATE INDEX idx_notif_out_processing ON notification_outbound(state, updated_at);

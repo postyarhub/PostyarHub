@@ -1,0 +1,12 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/api/v1/analytics/automation?days=30'
+order: 9000
+headers:
+  - key: Accept
+    value: application/json
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'

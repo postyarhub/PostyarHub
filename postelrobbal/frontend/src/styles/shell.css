@@ -1,0 +1,561 @@
+/* ============================================================
+   Postyar app shell — Task 14-a
+   1) Floating glass landing header (asovin-style, not full-width)
+   2) Dashboard shell: always-expanded desktop sidebar, compact
+      mobile top bar
+   3) Mobile bottom navigation (glass, sliding indicator, safe-area)
+   4) Glass «بیشتر» bottom sheet with staggered items
+   ============================================================ */
+
+/* ---------------- 1) Floating glass header ---------------- */
+
+.glass-header {
+  position: sticky;
+  top: 0.875rem;
+  z-index: 80;
+  padding: 0 1rem;
+}
+.glass-header__bar {
+  max-width: 75rem;
+  margin: 0 auto;
+  height: 4.125rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.875rem;
+  padding: 0 1.125rem;
+  border-radius: 1.125rem;
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(1.125rem) saturate(1.6);
+  backdrop-filter: blur(1.125rem) saturate(1.6);
+  border: 0.0625rem solid rgba(255, 255, 255, 0.65);
+  box-shadow:
+    0 0.375rem 1.5rem rgba(26, 29, 41, 0.09),
+    0 0.0625rem 0 rgba(255, 255, 255, 0.6) inset;
+}
+.glass-header__brand { display: inline-flex; align-items: center; color: inherit; }
+.glass-header__nav { display: flex; align-items: center; gap: 0.125rem; }
+.glass-header__link {
+  padding: 0.5rem 0.8125rem;
+  border-radius: 0.625rem;
+  color: var(--text-2);
+  font-size: 0.8438rem;
+  font-weight: 600;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.glass-header__link:hover { background: rgba(99, 102, 241, 0.09); color: var(--brand-strong); }
+.glass-header__actions { display: flex; align-items: center; gap: 0.5rem; }
+.glass-header__burger {
+  display: none;
+  width: 2.625rem;
+  height: 2.625rem;
+  border-radius: 0.75rem;
+  border: 0.0625rem solid var(--border);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+  transition: background 0.16s ease;
+}
+.glass-header__burger:hover { background: var(--surface-2); }
+
+.glass-header__sheet {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 1rem;
+  left: 1rem;
+  z-index: 90;
+  border-radius: 1.125rem;
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(1.375rem) saturate(1.6);
+  backdrop-filter: blur(1.375rem) saturate(1.6);
+  border: 0.0625rem solid rgba(255, 255, 255, 0.7);
+  box-shadow: var(--shadow-lg);
+  padding: 0.75rem;
+  animation: shellDrop 0.22s cubic-bezier(0.25, 1, 0.4, 1) both;
+}
+.glass-header__sheet-nav { display: grid; }
+.glass-header__sheet-link {
+  padding: 0.75rem 0.875rem;
+  border-radius: 0.75rem;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.875rem;
+  min-height: 2.875rem;
+  display: flex;
+  align-items: center;
+}
+.glass-header__sheet-link:hover { background: var(--brand-soft); color: var(--brand-strong); }
+.glass-header__sheet-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.375rem;
+  padding-top: 0.75rem;
+  border-top: 0.0625rem solid var(--border);
+}
+@keyframes shellDrop { from { opacity: 0; transform: translateY(-0.5rem); } }
+
+@media (max-width: 56rem) {
+  .glass-header { top: 0.625rem; padding: 0 0.75rem; }
+  .glass-header__bar { height: 3.75rem; padding: 0 0.75rem; border-radius: 1rem; }
+  .glass-header__nav { display: none; }
+  .glass-header__burger { display: inline-flex; }
+  .glass-header__login { display: none; }
+  .glass-header__sheet { right: 0.75rem; left: 0.75rem; }
+}
+
+/* ---------------- 2) Dashboard shell ---------------- */
+
+.dash-root { min-height: 100vh; display: flex; flex-direction: column; }
+
+.dash-topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 70;
+}
+.dash-topbar__inner {
+  padding: 0 16px;
+  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dash-topbar__brand { display: inline-flex; align-items: center; color: inherit; }
+.dash-topbar__actions { display: flex; align-items: center; gap: 8px; }
+
+/* Jalali date + 24h clock chip (item 10) — sits next to the bell button */
+.dash-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 13px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.10), rgba(139, 92, 246, 0.16));
+  border: 1px solid rgba(99, 102, 241, 0.26);
+  color: #4338ca;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dash-clock__sep { opacity: 0.55; margin: 0 1px; }
+.dash-clock__time { font-variant-numeric: tabular-nums; letter-spacing: 0.3px; }
+@media (max-width: 960px) {
+  /* compact time-only chip on tablets/phones */
+  .dash-clock__date, .dash-clock__sep { display: none; }
+  .dash-clock { height: 36px; padding: 0 11px; }
+}
+.dash-topbar__name { font-size: 13px; font-weight: 600; color: var(--text); }
+.dash-topbar__logout { min-height: 40px; }
+
+/* User avatar button (Task 17-b): renders the <Avatar> component (standard
+   character SVG / photo). Shown on mobile AND desktop next to the name. */
+.dash-avatar {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: var(--brand-grad);
+  color: #fff;
+  font-family: inherit;
+  font-weight: 800;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 3px 10px rgba(99, 102, 241, 0.3);
+  flex-shrink: 0;
+}
+.dash-userpop {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  width: 232px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  z-index: 80;
+  padding: 6px;
+  animation: shellPop 0.18s ease;
+}
+.dash-userpop__id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 9px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.dash-userpop__id > div { min-width: 0; }
+.dash-userpop__id strong { display: block; font-size: 13.5px; }
+.dash-userpop__id span { display: block; font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+.dash-userpop__row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dash-userpop__row:hover { background: var(--surface-2); color: var(--text); }
+.dash-userpop__row--danger { color: var(--danger); }
+.dash-userpop__row--danger:hover { background: var(--danger-soft); color: var(--danger); }
+
+@media (max-width: 768px) {
+  /* Task 14-a: slim sticky GLASS topbar on phones */
+  .dash-topbar {
+    background: rgba(255, 255, 255, 0.78);
+    -webkit-backdrop-filter: blur(18px) saturate(1.6);
+    backdrop-filter: blur(18px) saturate(1.6);
+    border-bottom: 1px solid rgba(228, 231, 240, 0.65);
+  }
+  .dash-topbar__name { display: none; }
+  .dash-topbar__logout { display: none; }
+}
+
+.dash-iconbtn {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.dash-iconbtn:hover { background: var(--surface-2); color: var(--text); }
+.dash-iconbtn__badge {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  background: var(--danger);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.dash-notifpop {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  z-index: 80;
+  animation: shellPop 0.18s ease;
+  overflow: hidden;
+}
+.dash-notifpop__head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 13.5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.dash-notifpop__head a { font-size: 12px; }
+.dash-notifpop__empty { padding: 20px; text-align: center; color: var(--text-2); font-size: 13px; margin: 0; }
+.dash-notifpop__item { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.dash-notifpop__item:last-child { border-bottom: none; }
+.dash-notifpop__item strong { display: block; font-size: 13px; }
+.dash-notifpop__item span { color: var(--text-2); display: block; }
+.dash-notifpop__time { font-size: 11.5px; margin-top: 3px; }
+@keyframes shellPop { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+
+/* Mobile popovers — full-width anchored panels under the topbar (item 11).
+   MUST come after the base .dash-notifpop rule: the previous placement
+   (before the base rule) was overridden by `position:absolute; width:320px`
+   and the bell popover escaped the left edge of phone screens. */
+@media (max-width: 768px) {
+  .dash-notifpop,
+  .dash-userpop {
+    position: fixed;
+    top: 62px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-width: none;
+  }
+}
+
+.dash-shell { flex: 1; display: flex; max-width: 1400px; margin: 0 auto; width: 100%; }
+
+/* Desktop sidebar — always expanded, fixed width (Task 14-a: no toggle) */
+.dash-sidebar {
+  width: 262px;
+  flex-shrink: 0;
+  padding: 18px 12px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  max-height: calc(100vh - 62px);
+  overflow-y: auto;
+  position: sticky;
+  top: 62px;
+}
+.dash-main { flex: 1; padding: 22px 20px; min-width: 0; }
+
+.dash-nav { display: grid; gap: 3px; }
+.dash-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  transition: background 0.15s ease, color 0.15s ease;
+  min-height: 42px;
+}
+.dash-nav__item svg { flex-shrink: 0; opacity: 0.85; }
+.dash-nav__item:hover { background: var(--surface-2); color: var(--text); }
+.dash-nav__item.is-active {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-weight: 700;
+}
+.dash-nav__item.is-active svg { opacity: 1; }
+
+.dash-footer {
+  margin-top: auto;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 14px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+@media (max-width: 768px) {
+  .dash-topbar__inner { height: 56px; padding: 0 12px; }
+  .dash-topbar__name { display: none; }
+  .dash-sidebar { display: none; } /* replaced by bottom nav + sheet */
+  .dash-main { padding: 16px 14px calc(96px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Tablets 769–1024px: keep the sidebar but slim it so content breathes */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .dash-sidebar { width: 232px; padding: 14px 10px; }
+  .dash-main { padding: 18px 16px; }
+}
+
+/* ---------------- 3) Mobile bottom navigation ---------------- */
+
+.bottomnav {
+  position: fixed;
+  right: 12px;
+  left: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  height: 64px;
+  z-index: 90;
+  display: none;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7);
+  backdrop-filter: blur(20px) saturate(1.7);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 10px 30px rgba(26, 29, 41, 0.16);
+  overflow: hidden;
+}
+/* sliding active pill — 5 equal slots; --i = active slot index (RTL flow) */
+.bottomnav__indicator {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  right: 0;
+  width: calc(100% / 5);
+  border-radius: 15px;
+  background: var(--brand-soft);
+  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.18) inset;
+  transform: translateX(calc(var(--i, 0) * -100%));
+  transition: transform 0.42s cubic-bezier(0.3, 1.35, 0.4, 1);
+}
+.bottomnav__slot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.2s ease, transform 0.15s ease;
+}
+.bottomnav__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  line-height: 1.4;
+}
+.bottomnav__slot.is-active { color: var(--brand-strong); font-weight: 800; }
+.bottomnav__slot:active { transform: scale(0.94); }
+.bottomnav__slot--btn { background: none; border: none; padding: 0; font-family: inherit; cursor: pointer; }
+
+@media (max-width: 768px) {
+  .bottomnav { display: flex; }
+}
+
+/* ---------------- 4) Glass «بیشتر» bottom sheet ---------------- */
+
+.dash-sheet { position: fixed; inset: 0; z-index: 95; }
+.dash-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 14, 24, 0.45);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  animation: shellFadeIn 0.22s ease both;
+}
+.dash-sheet__panel {
+  position: absolute;
+  right: 0;
+  left: 0;
+  bottom: 0;
+  border-radius: 24px 24px 0 0;
+  background: rgba(255, 255, 255, 0.88);
+  -webkit-backdrop-filter: blur(24px) saturate(1.7);
+  backdrop-filter: blur(24px) saturate(1.7);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-bottom: none;
+  box-shadow: 0 -12px 40px rgba(26, 29, 41, 0.22);
+  padding: 10px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 72vh;
+  overflow-y: auto;
+  animation: sheetUp 0.3s cubic-bezier(0.3, 1.2, 0.4, 1) both;
+}
+.dash-sheet.is-closing .dash-sheet__backdrop { animation: shellFadeOut 0.24s ease both; }
+.dash-sheet.is-closing .dash-sheet__panel { animation: sheetDown 0.26s ease both; }
+
+.dash-sheet__grabber {
+  display: block;
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: #d3d7e4;
+  margin: 4px auto 8px;
+}
+.dash-sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px 10px;
+}
+.dash-sheet__head strong { font-size: 15px; font-weight: 800; }
+.dash-sheet__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px 4px;
+}
+@media (max-width: 400px) {
+  .dash-sheet__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.dash-sheet__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 2px 10px;
+  border-radius: 14px;
+  text-decoration: none;
+  color: var(--text-2);
+  animation: sheetItemIn 0.34s cubic-bezier(0.25, 1, 0.4, 1) both;
+  animation-delay: calc(var(--d, 0) * 26ms);
+  transition: background 0.15s ease;
+}
+.dash-sheet__item:hover { background: rgba(99, 102, 241, 0.06); }
+.dash-sheet__tile {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.dash-sheet__item:hover .dash-sheet__tile {
+  transform: translateY(-2px);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  box-shadow: 0 6px 14px rgba(99, 102, 241, 0.22);
+}
+.dash-sheet__item.is-active { color: var(--brand-strong); }
+.dash-sheet__item.is-active .dash-sheet__tile { background: var(--brand-grad); color: #fff; }
+.dash-sheet__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.5;
+}
+@keyframes sheetUp { from { transform: translateY(100%); } }
+@keyframes sheetDown { to { transform: translateY(100%); } }
+@keyframes sheetItemIn { from { opacity: 0; transform: translateY(14px) scale(0.95); } }
+@keyframes shellFadeIn { from { opacity: 0; } }
+@keyframes shellFadeOut { to { opacity: 0; } }
+
+
+/* R6 public-only navigation finish; dashboard shell selectors are not changed. */
+.glass-header{background:rgba(255,255,255,.93);border-bottom:.0625rem solid rgba(220,231,250,.92);box-shadow:0 .3rem 1.3rem rgba(25,52,112,.035);backdrop-filter:blur(1.1rem);-webkit-backdrop-filter:blur(1.1rem)}
+.glass-header__bar{max-width:80rem;min-height:4.35rem}
+.glass-header__nav{gap:.15rem}
+.glass-header__link{position:relative;border-radius:.7rem;color:#3b4c6d;transition:background .16s ease,color .16s ease}
+.glass-header__link:hover,.glass-header__link.is-active{background:#edf3ff;color:#1648e8}
+.glass-header__link.is-active:after{content:"";position:absolute;inset-inline:1rem;bottom:-.55rem;height:.18rem;border-radius:999rem;background:#2857f5}
+.glass-header__brand{flex-shrink:0}
+.glass-header__actions .btn-primary{box-shadow:0 .4rem 1rem rgba(40,87,245,.16)}
+.glass-header__sheet{border-color:#e0e9fb;box-shadow:0 1rem 2.5rem rgba(16,35,74,.12)}
+.glass-header__sheet-link{border-radius:.8rem}
+@media(max-width:72rem){.glass-header__nav{gap:0}.glass-header__link{padding-inline:.55rem}}
+@media(max-width:48rem){.glass-header__link.is-active:after{display:none}}
+
+/* R8 public shell refinements; dashboard rules above remain untouched. */
+.glass-header__bar{border:1px solid rgba(220,231,250,.95);background:rgba(255,255,255,.9);box-shadow:0 .35rem 1.25rem rgba(25,52,112,.055);backdrop-filter:blur(1.15rem) saturate(1.35)}
+.glass-header__brand img{transition:transform .25s ease,filter .25s ease}
+.glass-header__brand:hover img{transform:rotate(-4deg) scale(1.035);filter:drop-shadow(0 .25rem .4rem rgba(40,87,245,.18))}
+.glass-header__link.is-active{color:#1744df;position:relative;background:transparent}
+.glass-header__link.is-active:after{content:"";position:absolute;inset-inline:1rem;bottom:.12rem;height:.16rem;border-radius:999px;background:#2857f5}
+.glass-header__burger{border-color:#dbe5fa;color:#183260;background:rgba(255,255,255,.92)}
+.ln-footer{margin-top:2rem}
+@media(max-width:56rem){.glass-header__link.is-active:after{display:none}.glass-header__sheet{background:rgba(255,255,255,.97);border-color:#e0e9fb}}
+@media(prefers-reduced-motion:reduce){.glass-header__brand img{transition:none!important}}
+
+
+/* POSTYAR-HEADER-CONTENT-ONLY-20261014-R3 */
+/* Keep the centered header bar; remove the full-viewport painted wrapper. The landing hero is untouched. */
+.glass-header{position:sticky;top:.5rem;z-index:80;width:calc(100% - 2rem);max-width:82rem;margin-inline:auto;padding:0;background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.glass-header__bar{width:100%;max-width:81.25rem;margin-inline:auto}
+@media(max-width:56rem){.glass-header{top:.5rem;width:calc(100% - 1rem)}.glass-header__bar{width:100%}}

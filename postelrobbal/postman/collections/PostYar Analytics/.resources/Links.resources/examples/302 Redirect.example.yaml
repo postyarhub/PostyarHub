@@ -1,0 +1,14 @@
+$kind: http-example
+name: '302 Redirect'
+request:
+  url: 'https://postyarhub.ir/api/v1/r/example_token'
+  method: GET
+response:
+  statusCode: 302
+  statusText: Found
+  headers:
+    - key: Location
+      value: 'https://example.com/product/demo'
+  body:
+    type: text
+    content: ''

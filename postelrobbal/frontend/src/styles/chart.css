@@ -1,0 +1,114 @@
+/* ============================================================
+   Analytics daily-activity chart — Task 14-a
+   RTL time axis (oldest day on the right, newest on the left,
+   like Persian charts), Jalali labels, rich hover/tap popover.
+   ============================================================ */
+
+.achart { position: relative; }
+
+/* Explicit RTL flow: DOM order oldest→newest renders right→left */
+.achart__row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  direction: rtl;
+  padding: 6px 2px 0;
+}
+.achart__col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.achart__count { font-size: 10.5px; color: var(--text-2); line-height: 1.4; }
+.achart__barzone {
+  height: 160px;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
+}
+.achart__bar {
+  display: block;
+  width: 66%;
+  max-width: 38px;
+  padding: 0;
+  border: none;
+  border-radius: 7px 7px 4px 4px;
+  background: var(--brand);
+  cursor: pointer;
+  transition: height 0.25s ease, filter 0.15s ease, box-shadow 0.15s ease;
+  font: inherit;
+}
+.achart__bar:hover,
+.achart__bar.is-active {
+  filter: brightness(1.12);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.45);
+}
+.achart__bar:focus-visible { outline: 2.5px solid var(--brand-strong); outline-offset: 2px; }
+.achart__bar--zero { background: var(--border); cursor: default; box-shadow: none; }
+.achart__bar--zero:hover { filter: none; }
+.achart__date { font-size: 9.5px; color: var(--text-2); white-space: nowrap; }
+
+/* tooltip — outer element positions (centered / flipped at edges),
+   inner element runs the entrance animation (keeps transforms apart) */
+.achart__tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: 238px;
+  max-width: 76vw;
+  pointer-events: none;
+}
+.achart__tip--center { left: 50%; transform: translateX(-50%); }
+.achart__tip--start { right: -8px; }
+.achart__tip--end { left: -8px; }
+.achart__tipbody {
+  background: rgba(255, 255, 255, 0.93);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 16px;
+  box-shadow: 0 14px 40px rgba(26, 29, 41, 0.22);
+  padding: 12px 14px;
+  text-align: right;
+  animation: tipIn 0.2s cubic-bezier(0.3, 1.2, 0.4, 1) both;
+}
+@keyframes tipIn { from { opacity: 0; transform: translateY(8px) scale(0.95); } }
+
+.achart__tip__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.achart__tip__date { font-size: 12.5px; font-weight: 800; color: var(--text); }
+.achart__tip__today { font-size: 10px; font-weight: 800; color: var(--brand-strong); background: var(--brand-soft); border-radius: 999px; padding: 2px 8px; }
+.achart__tip__rows { display: grid; gap: 5px; margin-bottom: 10px; }
+.achart__tip__row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-2); }
+.achart__tip__row strong { margin-inline-start: auto; color: var(--text); font-size: 12px; font-weight: 800; }
+.achart__dot { width: 9px; height: 9px; border-radius: 3.5px; flex-shrink: 0; }
+.achart__dot--sent { background: var(--success); }
+.achart__dot--failed { background: var(--danger); }
+.achart__dot--other { background: #a5b4fc; }
+.achart__tip__viz {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.achart__ringtext { font-size: 9.5px; font-weight: 800; fill: var(--text); }
+.achart__spark { flex: 1; min-width: 0; }
+.achart__spark__label { display: block; font-size: 10px; color: var(--text-2); margin-bottom: 3px; }
+
+@media (max-width: 480px) {
+  .achart__barzone { height: 128px; }
+  .achart__bar { max-width: 30px; border-radius: 6px 6px 3px 3px; }
+  .achart__count { font-size: 9.5px; }
+}

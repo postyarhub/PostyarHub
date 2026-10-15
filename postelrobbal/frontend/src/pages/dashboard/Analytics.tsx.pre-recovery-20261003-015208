@@ -1,0 +1,809 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { api, ApiRequestError } from '../../lib/api';
+import { Badge, Card, EmptyState, PageLoading } from '../../components/ui';
+import { useToast } from '../../lib/toast';
+import { faMoney, faNumber, faRelative, PLATFORM_FA } from '../../lib/format';
+import { PlatformIcon } from '../../pages/admin/shared';
+
+type PlatformKey = 'telegram' | 'bale' | 'rubika' | 'wordpress';
+
+interface SummaryDto {
+  days: number;
+  events: { total: number; sent: number; failed: number };
+  successRate: number;
+  platforms: Record<PlatformKey, { sent: number; failed: number }>;
+  daily: Array<{ day: string; eventName: string; count: number }>;
+  topPosts: Array<{ id: string; title: string | null; events: number }>;
+  topCampaigns: Array<{ id: string; name: string; events: number }>;
+  errors: Array<{ eventType: string; count: number }>;
+  links: { clicks: number };
+  revenue: {
+    paymentsCompleted: number;
+    paymentsCompletedRial: number;
+    subscriptionRevenueRial: number;
+    walletTopupRial: number;
+    paymentsFailed: number;
+    subscriptionsCreated: number;
+    subscriptionsRenewed: number;
+    subscriptionsExpired: number;
+    referralsCreated: number;
+    referralRewardEvents: number;
+    referralRewardPoints: number;
+  };
+  automation: {
+    ai: {
+      requested: number;
+      completed: number;
+      failed: number;
+      successRate: number;
+      tokens: number;
+      avgDurationMs: number;
+    };
+    workflows: {
+      started: number;
+      completed: number;
+      failed: number;
+      successRate: number;
+      avgDurationMs: number;
+    };
+    errors: Array<{
+      eventType: string;
+      errorCode: string;
+      count: number;
+    }>;
+  };
+}
+
+interface EventsDto {
+  events: Array<{
+    id: string;
+    name: string;
+    subjectType: string;
+    subjectId: string;
+    props?: Record<string, unknown> | null;
+    createdAt: string;
+  }>;
+  nextCursor: string | null;
+}
+
+interface TargetDto {
+  platform: string;
+  channelTitle: string;
+  channelRef: string;
+  state: string;
+  attempts: number;
+  errorCode: string | null;
+}
+
+interface PostDetails {
+  post: { title: string | null };
+  targets: TargetDto[];
+}
+
+const EVENT_FA: Record<string, string> = {
+  'post.created': 'ایجاد پست',
+  'post.scheduled': 'زمان‌بندی پست',
+  'post.sent': 'ارسال موفق',
+  'post.failed': 'خطای ارسال',
+  'post.delivery.sent': 'تحویل موفق',
+  'post.delivery.failed': 'خطای تحویل',
+  'bot.created': 'افزودن ربات',
+  'bot.enabled': 'فعال‌سازی ربات',
+  'bot.disabled': 'غیرفعال‌سازی ربات',
+  'channel.connected': 'اتصال کانال',
+  'channel.disconnected': 'قطع اتصال کانال',
+  'payment.created': 'ایجاد پرداخت',
+  'payment.initiated': 'آغاز پرداخت',
+  'payment.completed': 'پرداخت موفق',
+  'payment.failed': 'پرداخت ناموفق',
+  'subscription.created': 'خرید اشتراک',
+  'subscription.renewed': 'تمدید اشتراک',
+  'subscription.expiring': 'نزدیک به پایان اشتراک',
+  'subscription.expired': 'پایان اشتراک',
+  'referral.rewarded': 'پاداش معرفی',
+  'wordpress.connected': 'اتصال وردپرس',
+  'wordpress.sync.completed': 'تکمیل همگام‌سازی وردپرس',
+  'wordpress.sync.failed': 'خطای همگام‌سازی وردپرس',
+  'wordpress.product.published': 'انتشار محصول',
+  'ai.requested': 'درخواست هوش مصنوعی',
+  'ai.completed': 'پردازش هوش مصنوعی',
+  'ai.failed': 'خطای هوش مصنوعی',
+  'workflow.started': 'شروع گردش‌کار',
+  'workflow.completed': 'تکمیل گردش‌کار',
+  'workflow.failed': 'خطای گردش‌کار',
+  'user.login': 'ورود به حساب',
+  'user.registration': 'ثبت‌نام',
+};
+
+const ERROR_FA: Record<string, { label: string; action: string }> = {
+  NOT_FOUND: {
+    label: 'مقصد پیدا نشد',
+    action: 'شناسه کانال یا گفتگو و عضویت ربات را بررسی کنید.',
+  },
+  TRANSIENT: {
+    label: 'اختلال موقت پلتفرم',
+    action: 'ارسال با تلاش مجدد خودکار ادامه می‌یابد؛ اتصال را بررسی کنید.',
+  },
+  BLOCKED: {
+    label: 'دسترسی ناکافی',
+    action: 'سطح دسترسی ربات و نقش مدیر کانال یا گروه را بررسی کنید.',
+  },
+  UNAUTHORIZED: {
+    label: 'اعتبار اتصال نامعتبر',
+    action: 'توکن یا اتصال پلتفرم را دوباره بررسی کنید.',
+  },
+  CHANNEL_DISABLED: {
+    label: 'کانال غیرفعال',
+    action: 'وضعیت کانال و اتصال ربات را بررسی کنید.',
+  },
+  PROVIDER_UNAVAILABLE: {
+    label: 'پلتفرم موقتاً در دسترس نیست',
+    action: 'اتصال را بررسی کرده و بعداً دوباره تلاش کنید.',
+  },
+  RATE_LIMITED: {
+    label: 'محدودیت نرخ ارسال',
+    action: 'فاصله ارسال را بیشتر کنید و ارسال مجدد را به زمان بعد موکول کنید.',
+  },
+  VALIDATION: {
+    label: 'داده پیام نامعتبر',
+    action: 'محتوا، قالب، لینک‌ها و مقادیر ورودی را بررسی کنید.',
+  },
+};
+
+const number = (value: number) => faNumber(Math.max(0, Math.round(value)));
+const money = (value: number) => faMoney(Math.max(0, Math.round(value)));
+
+const duration = (ms: number) => {
+  if (!ms || ms < 1) return '—';
+  if (ms < 1000) return `${number(ms)} میلی‌ثانیه`;
+  return `${(ms / 1000).toLocaleString('fa-IR', {
+    maximumFractionDigits: 1,
+  })} ثانیه`;
+};
+
+const errorInfo = (code: string) =>
+  ERROR_FA[code] ?? {
+    label: 'خطای ناشناخته',
+    action: 'جزئیات این رویداد را بررسی کنید.',
+  };
+
+function Section({
+  title,
+  description,
+  children,
+  className = '',
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card className={`analytics-v4-section ${className}`.trim()}>
+      <div className="analytics-v4-section__header">
+        <div>
+          <h2>{title}</h2>
+          {description ? <p>{description}</p> : null}
+        </div>
+      </div>
+      {children}
+    </Card>
+  );
+}
+
+function Progress({
+  value,
+  max,
+  tone = 'brand',
+}: {
+  value: number;
+  max: number;
+  tone?: 'brand' | 'success' | 'danger';
+}) {
+  const percent =
+    max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+
+  return (
+    <div className="analytics-v4-progress">
+      <span
+        className={`analytics-v4-progress__fill analytics-v4-progress__fill--${tone}`}
+        style={{ width: `${percent}%` }}
+      />
+    </div>
+  );
+}
+
+function Ring({ value }: { value: number }) {
+  const percent = Math.min(100, Math.max(0, value));
+
+  return (
+    <div
+      className="analytics-v4-ring"
+      style={{
+        background: `conic-gradient(var(--brand) ${percent}%, var(--surface-2) 0)`,
+      }}
+    >
+      <div>
+        <strong>{number(percent)}٪</strong>
+        <span>موفقیت</span>
+      </div>
+    </div>
+  );
+}
+
+function MiniTrend({ values }: { values: number[] }) {
+  if (!values.length) {
+    return (
+      <div className="analytics-v4-empty-chart">
+        داده‌ی روزانه هنوز ثبت نشده است.
+      </div>
+    );
+  }
+
+  const max = Math.max(1, ...values);
+
+  return (
+    <div className="analytics-v4-trend">
+      {values.map((value, index) => (
+        <div key={`${index}-${value}`} className="analytics-v4-trend__item">
+          <span
+            style={{
+              height: `${Math.max(8, (value / max) * 100)}%`,
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function Analytics() {
+  const toast = useToast();
+  const [summary, setSummary] = useState<SummaryDto | null>(null);
+  const [events, setEvents] = useState<EventsDto['events']>([]);
+  const [postDetails, setPostDetails] = useState<Record<string, PostDetails>>(
+    {},
+  );
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const [s, ev] = await Promise.all([
+          api.get<SummaryDto>('/api/v1/analytics/summary?days=30'),
+          api.get<EventsDto>('/api/v1/analytics/events?limit=24'),
+        ]);
+
+        const ids = (s.topPosts ?? []).slice(0, 5).map((post) => post.id);
+        const details = await Promise.allSettled(
+          ids.map(
+            async (id) =>
+              [id, await api.get<PostDetails>(`/api/v1/posts/${id}`)] as const,
+          ),
+        );
+
+        const map: Record<string, PostDetails> = {};
+
+        for (const result of details) {
+          if (result.status === 'fulfilled') {
+            map[result.value[0]] = result.value[1];
+          }
+        }
+
+        if (alive) {
+          setSummary(s);
+          setEvents(ev.events ?? []);
+          setPostDetails(map);
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof ApiRequestError
+            ? error.message
+            : 'دریافت آمار تحلیل ناموفق بود.',
+        );
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [toast]);
+
+  const daily = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const row of summary?.daily ?? []) {
+      map.set(row.day, (map.get(row.day) ?? 0) + Number(row.count ?? 0));
+    }
+
+    return Array.from(map.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-30);
+  }, [summary]);
+
+  const errorRows = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const row of summary?.automation.errors ?? []) {
+      const key = `${row.eventType}::${row.errorCode}`;
+      map.set(key, (map.get(key) ?? 0) + Number(row.count ?? 0));
+    }
+
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([key, count]) => {
+        const [eventType, errorCode] = key.split('::');
+        return { eventType, errorCode, count };
+      });
+  }, [summary]);
+
+  if (loading || !summary) {
+    return <PageLoading />;
+  }
+
+  const platforms = (
+    ['telegram', 'bale', 'rubika', 'wordpress'] as PlatformKey[]
+  ).map((platform) => {
+    const item = summary.platforms?.[platform] ?? {
+      sent: 0,
+      failed: 0,
+    };
+
+    return {
+      platform,
+      sent: Number(item.sent ?? 0),
+      failed: Number(item.failed ?? 0),
+    };
+  });
+
+  const aiRate = Number(summary.automation.ai.successRate ?? 0);
+  const workflowRate = Number(
+    summary.automation.workflows.successRate ?? 0,
+  );
+
+  const totalRevenue = Number(
+    summary.revenue.paymentsCompletedRial ?? 0,
+  );
+
+  return (
+    <div className="analytics-v4-page">
+      <header className="analytics-v4-hero">
+        <div>
+          <span className="analytics-v4-eyebrow">مرکز تحلیل</span>
+          <h1>آمار و عملکرد</h1>
+          <p>
+            نمای یکپارچه‌ی عملکرد ارسال، پلتفرم‌ها، محتوا، هوش مصنوعی،
+            گردش‌کار، اشتراک و درآمد در ۳۰ روز اخیر.
+          </p>
+        </div>
+        <Badge tone="brand">۳۰ روز اخیر</Badge>
+      </header>
+
+      <section className="analytics-v4-kpis">
+        <Card className="analytics-v4-kpi analytics-v4-kpi--accent">
+          <span className="analytics-v4-kpi__icon">📨</span>
+          <div>
+            <strong>{number(summary.events.sent)}</strong>
+            <span>ارسال موفق</span>
+            <small>ارسال‌هایی که با موفقیت ثبت شده‌اند</small>
+          </div>
+        </Card>
+
+        <Card className="analytics-v4-kpi">
+          <span className="analytics-v4-kpi__icon">⚠️</span>
+          <div>
+            <strong>{number(summary.events.failed)}</strong>
+            <span>خطای ارسال</span>
+            <small>مواردی که نیاز به بررسی دارند</small>
+          </div>
+        </Card>
+
+        <Card className="analytics-v4-kpi">
+          <div className="analytics-v4-kpi__ring">
+            <Ring value={summary.successRate} />
+          </div>
+          <div>
+            <strong>{number(summary.successRate)}٪</strong>
+            <span>نرخ موفقیت</span>
+            <small>نسبت عملیات موفق به کل عملیات</small>
+          </div>
+        </Card>
+
+        <Card className="analytics-v4-kpi">
+          <span className="analytics-v4-kpi__icon">🔗</span>
+          <div>
+            <strong>{number(summary.links.clicks)}</strong>
+            <span>کلیک لینک</span>
+            <small>تعامل ثبت‌شده روی لینک‌های رهگیری</small>
+          </div>
+        </Card>
+      </section>
+
+      <Section
+        title="ارسال به تفکیک پلتفرم"
+        description="تعداد کل، موفق و ناموفق هر پلتفرم در یک نمای خوانا."
+      >
+        <div className="analytics-v4-platforms">
+          {platforms.map((item) => {
+            const total = item.sent + item.failed;
+            const rate = total ? Math.round((item.sent / total) * 100) : 0;
+
+            return (
+              <div
+                key={item.platform}
+                className="analytics-v4-platform"
+              >
+                <div className="analytics-v4-platform__head">
+                  <div>
+                    <PlatformIcon platform={item.platform} size={24} />
+                    <strong>
+                      {PLATFORM_FA[item.platform] ?? item.platform}
+                    </strong>
+                  </div>
+                  <Badge
+                    tone={
+                      rate >= 90
+                        ? 'success'
+                        : rate >= 60
+                          ? 'brand'
+                          : 'danger'
+                    }
+                  >
+                    {number(rate)}٪ موفق
+                  </Badge>
+                </div>
+
+                <div className="analytics-v4-platform__number">
+                  {number(total)}
+                  <span>عملیات</span>
+                </div>
+
+                <Progress value={item.sent} max={Math.max(1, total)} tone="success" />
+
+                <div className="analytics-v4-platform__stats">
+                  <span>
+                    موفق <b>{number(item.sent)}</b>
+                  </span>
+                  <span>
+                    خطا <b>{number(item.failed)}</b>
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      <section className="analytics-v4-two-col">
+        <Section
+          title="پست‌های پرتراکنش"
+          description="نام پست، کانال مقصد، پلتفرم و نتیجه‌ی ارسال."
+        >
+          {summary.topPosts.length === 0 ? (
+            <EmptyState
+              icon="📊"
+              title="داده‌ای ثبت نشده"
+              description="پس از انتشار پست‌ها، این فهرست تکمیل می‌شود."
+            />
+          ) : (
+            <div className="analytics-v4-posts">
+              {summary.topPosts.slice(0, 5).map((post) => {
+                const detail = postDetails[post.id];
+                const groups = new Map<
+                  string,
+                  {
+                    channel: string;
+                    platform: string;
+                    sent: number;
+                    failed: number;
+                  }
+                >();
+
+                for (const target of detail?.targets ?? []) {
+                  const key = `${target.channelRef}::${target.platform}`;
+                  const current = groups.get(key) ?? {
+                    channel: target.channelTitle || 'کانال متصل',
+                    platform: target.platform,
+                    sent: 0,
+                    failed: 0,
+                  };
+
+                  if (target.state === 'SENT') current.sent += 1;
+                  if (target.state === 'FAILED') current.failed += 1;
+
+                  groups.set(key, current);
+                }
+
+                return (
+                  <div key={post.id} className="analytics-v4-post">
+                    <div className="analytics-v4-post__title">
+                      <Link to={`/dashboard/posts/${post.id}`}>
+                        {post.title ||
+                          detail?.post?.title ||
+                          'پست بدون عنوان'}
+                      </Link>
+                      <Badge tone="brand">
+                        {number(post.events)} رویداد
+                      </Badge>
+                    </div>
+
+                    {groups.size ? (
+                      <div className="analytics-v4-post__targets">
+                        {Array.from(groups.values()).map((group) => (
+                          <span
+                            key={`${group.channel}-${group.platform}`}
+                            className="analytics-v4-pill"
+                          >
+                            <PlatformIcon
+                              platform={group.platform}
+                              size={15}
+                            />
+                            <b>{group.channel}</b>
+                            <span>
+                              {number(group.sent)} موفق
+                            </span>
+                            <span>
+                              {number(group.failed)} خطا
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="analytics-v4-note">
+                        جزئیات مقصد در دسترس نیست.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+
+        <Section
+          title="رایج‌ترین خطاها"
+          description="دسته‌بندی فارسی خطا و اقدام پیشنهادی."
+        >
+          {errorRows.length === 0 ? (
+            <EmptyState
+              icon="✅"
+              title="خطای پرتکراری وجود ندارد"
+              description="در این بازه خطای شاخصی ثبت نشده است."
+            />
+          ) : (
+            <div className="analytics-v4-errors">
+              {errorRows.map((item) => {
+                const info = errorInfo(item.errorCode);
+
+                return (
+                  <div
+                    key={`${item.eventType}-${item.errorCode}`}
+                    className="analytics-v4-error"
+                  >
+                    <div className="analytics-v4-error__top">
+                      <div>
+                        <strong>{info.label}</strong>
+                        <span>
+                          {EVENT_FA[item.eventType] ??
+                            'رویداد سیستمی'}
+                        </span>
+                      </div>
+                      <Badge tone="danger">
+                        {number(item.count)}
+                      </Badge>
+                    </div>
+                    <p>
+                      <b>اقدام پیشنهادی:</b> {info.action}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+      </section>
+
+      <section className="analytics-v4-two-col">
+        <Section
+          title="هوش مصنوعی و گردش‌کار"
+          description="اجرای موفق، خطا، نرخ موفقیت و زمان پردازش."
+        >
+          <div className="analytics-v4-automation">
+            <div className="analytics-v4-automation-card">
+              <div className="analytics-v4-automation-card__head">
+                <div>
+                  <span>هوش مصنوعی</span>
+                  <strong>
+                    {number(summary.automation.ai.completed)}
+                  </strong>
+                  <small>پردازش تکمیل‌شده</small>
+                </div>
+                <Ring value={aiRate} />
+              </div>
+
+              <div className="analytics-v4-statline">
+                <div>
+                  <span>درخواست</span>
+                  <b>{number(summary.automation.ai.requested)}</b>
+                </div>
+                <div>
+                  <span>خطا</span>
+                  <b>{number(summary.automation.ai.failed)}</b>
+                </div>
+                <div>
+                  <span>زمان میانگین</span>
+                  <b>
+                    {duration(
+                      Number(
+                        summary.automation.ai.avgDurationMs ?? 0,
+                      ),
+                    )}
+                  </b>
+                </div>
+              </div>
+            </div>
+
+            <div className="analytics-v4-automation-card">
+              <div className="analytics-v4-automation-card__head">
+                <div>
+                  <span>گردش‌کار</span>
+                  <strong>
+                    {number(
+                      summary.automation.workflows.completed,
+                    )}
+                  </strong>
+                  <small>اجرای تکمیل‌شده</small>
+                </div>
+                <Ring value={workflowRate} />
+              </div>
+
+              <div className="analytics-v4-statline">
+                <div>
+                  <span>شروع</span>
+                  <b>
+                    {number(
+                      summary.automation.workflows.started,
+                    )}
+                  </b>
+                </div>
+                <div>
+                  <span>خطا</span>
+                  <b>
+                    {number(
+                      summary.automation.workflows.failed,
+                    )}
+                  </b>
+                </div>
+                <div>
+                  <span>زمان میانگین</span>
+                  <b>
+                    {duration(
+                      Number(
+                        summary.automation.workflows.avgDurationMs ??
+                          0,
+                      ),
+                    )}
+                  </b>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          title="درآمد و اشتراک"
+          description="نمای مالی و چرخه‌ی اشتراک در ۳۰ روز اخیر."
+        >
+          <div className="analytics-v4-revenue-main">
+            <span>مجموع پرداخت‌های موفق</span>
+            <strong>{money(totalRevenue)}</strong>
+            <small>ریال</small>
+          </div>
+
+          <div className="analytics-v4-revenue-grid">
+            <div>
+              <span>درآمد اشتراک</span>
+              <b>
+                {money(
+                  summary.revenue.subscriptionRevenueRial,
+                )}
+              </b>
+            </div>
+            <div>
+              <span>شارژ کیف پول</span>
+              <b>
+                {money(summary.revenue.walletTopupRial)}
+              </b>
+            </div>
+            <div>
+              <span>اشتراک جدید</span>
+              <b>
+                {number(
+                  summary.revenue.subscriptionsCreated,
+                )}
+              </b>
+            </div>
+            <div>
+              <span>تمدید اشتراک</span>
+              <b>
+                {number(
+                  summary.revenue.subscriptionsRenewed,
+                )}
+              </b>
+            </div>
+          </div>
+        </Section>
+      </section>
+
+      <Section
+        title="روند فعالیت روزانه"
+        description="مجموع رویدادهای ثبت‌شده در ۳۰ روز اخیر."
+      >
+        <MiniTrend values={daily.map(([, value]) => value)} />
+
+        <div className="analytics-v4-day-summary">
+          {daily.slice(-7).map(([day, value]) => (
+            <div key={day}>
+              <span>{day.slice(5)}</span>
+              <b>{number(value)}</b>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title="آخرین فعالیت‌ها"
+        description="آخرین رویدادهای ثبت‌شده در حساب کاربری."
+      >
+        {events.length === 0 ? (
+          <EmptyState
+            icon="🧭"
+            title="فعالیتی ثبت نشده"
+            description="فعالیت‌های جدید در این بخش نمایش داده می‌شوند."
+          />
+        ) : (
+          <div className="analytics-v4-events">
+            {events.map((event) => {
+              const failed =
+                event.name.endsWith('.failed') ||
+                event.name === 'post.failed';
+
+              return (
+                <div
+                  key={event.id}
+                  className="analytics-v4-event"
+                >
+                  <i
+                    className={
+                      failed
+                        ? 'analytics-v4-event__dot analytics-v4-event__dot--danger'
+                        : 'analytics-v4-event__dot'
+                    }
+                  />
+
+                  <div>
+                    <strong>
+                      {EVENT_FA[event.name] ??
+                        'فعالیت ثبت‌شده'}
+                    </strong>
+                    <span>
+                      رویداد ثبت‌شده در حساب کاربری
+                    </span>
+                  </div>
+
+                  <time>{faRelative(event.createdAt)}</time>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}

@@ -1,0 +1,178 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { api, ApiRequestError } from '../../lib/api';
+import { Badge, Card, EmptyState, PageLoading } from '../../components/ui';
+import { useToast } from '../../lib/toast';
+import { faMoney, faNumber, faRelative, PLATFORM_FA } from '../../lib/format';
+import { PlatformIcon } from '../../pages/admin/shared';
+
+type PlatformKey = 'telegram' | 'bale' | 'rubika' | 'wordpress';
+
+interface SummaryDto {
+  days: number;
+  events: { total: number; sent: number; failed: number };
+  successRate: number;
+  platforms: Record<PlatformKey, { sent: number; failed: number }>;
+  daily: Array<{ day: string; eventName: string; count: number }>;
+  topPosts: Array<{ id: string; title: string | null; events: number }>;
+  topCampaigns: Array<{ id: string; name: string; events: number }>;
+  errors: Array<{ eventType: string; count: number }>;
+  links: { clicks: number };
+  revenue: {
+    paymentsCompleted: number;
+    paymentsCompletedRial: number;
+    subscriptionRevenueRial: number;
+    walletTopupRial: number;
+    paymentsFailed: number;
+    subscriptionsCreated: number;
+    subscriptionsRenewed: number;
+    subscriptionsExpired: number;
+    referralsCreated: number;
+    referralRewardEvents: number;
+    referralRewardPoints: number;
+  };
+  automation: {
+    ai: { requested: number; completed: number; failed: number; successRate: number; tokens: number; avgDurationMs: number };
+    workflows: { started: number; completed: number; failed: number; successRate: number; avgDurationMs: number };
+    errors: Array<{ eventType: string; errorCode: string; count: number }>;
+  };
+}
+
+interface EventsDto { events: Array<{ id: string; name: string; subjectType: string; subjectId: string; props?: Record<string, unknown> | null; createdAt: string }>; nextCursor: string | null }
+interface TargetDto { platform: string; channelTitle: string; channelRef: string; state: string; attempts: number; errorCode: string | null }
+interface PostDetails { post: { title: string | null }; targets: TargetDto[] }
+
+const EVENT_FA: Record<string, string> = {
+  'post.created': 'ایجاد پست', 'post.scheduled': 'زمان‌بندی پست', 'post.sent': 'ارسال موفق', 'post.failed': 'خطای ارسال',
+  'post.delivery.sent': 'تحویل موفق', 'post.delivery.failed': 'خطای تحویل', 'bot.created': 'افزودن ربات', 'channel.connected': 'اتصال کانال',
+  'payment.completed': 'پرداخت موفق', 'payment.failed': 'پرداخت ناموفق', 'subscription.created': 'خرید اشتراک', 'subscription.renewed': 'تمدید اشتراک',
+  'subscription.expired': 'پایان اشتراک', 'referral.rewarded': 'پاداش معرفی', 'wordpress.connected': 'اتصال وردپرس', 'wordpress.product.published': 'انتشار محصول',
+  'ai.requested': 'درخواست هوش مصنوعی', 'ai.completed': 'پردازش هوش مصنوعی', 'ai.failed': 'خطای هوش مصنوعی',
+  'workflow.started': 'شروع گردش‌کار', 'workflow.completed': 'تکمیل گردش‌کار', 'workflow.failed': 'خطای گردش‌کار',
+};
+
+const ERROR_FA: Record<string, { label: string; action: string }> = {
+  NOT_FOUND: { label: 'مقصد پیدا نشد', action: 'شناسه کانال/گفتگو و عضویت ربات را بررسی کنید.' },
+  TRANSIENT: { label: 'اختلال موقت پلتفرم', action: 'ارسال با تلاش مجدد خودکار دوباره انجام می‌شود؛ وضعیت اتصال را بررسی کنید.' },
+  BLOCKED: { label: 'دسترسی مسدود یا ناکافی', action: 'سطح دسترسی ربات و نقش مدیر کانال/گروه را بررسی کنید.' },
+  UNAUTHORIZED: { label: 'اعتبار اتصال نامعتبر', action: 'توکن یا اتصال پلتفرم را دوباره ثبت و تأیید کنید.' },
+  CHANNEL_DISABLED: { label: 'کانال غیرفعال', action: 'کانال را فعال و اتصال ربات را بررسی کنید.' },
+  PROVIDER_UNAVAILABLE: { label: 'پلتفرم در دسترس نیست', action: 'بعداً دوباره تلاش کنید و وضعیت سرویس‌دهنده را بررسی کنید.' },
+  RATE_LIMITED: { label: 'محدودیت نرخ ارسال', action: 'فاصله ارسال را افزایش دهید و تلاش مجدد را به زمان بعد موکول کنید.' },
+  VALIDATION: { label: 'داده پیام نامعتبر', action: 'قالب، لینک‌ها و مقادیر ورودی پیام را اصلاح کنید.' },
+};
+
+const number = (value: number) => faNumber(Math.max(0, Math.round(value)));
+const money = (value: number) => faMoney(Math.max(0, Math.round(value)));
+
+function errorInfo(code: string) { return ERROR_FA[code] ?? { label: 'خطای ناشناخته', action: 'جزئیات خطا و درخواست مربوطه را بررسی کنید.' }; }
+
+function Panel({ title, meta, children, className = '' }: { title: string; meta?: string; children: ReactNode; className?: string }) {
+  return <Card className={className} style={{ minWidth: 0, overflow: 'hidden' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}><div><h2 style={{ margin: 0, fontSize: 16, fontWeight: 850 }}>{title}</h2>{meta ? <div style={{ color: 'var(--text-2)', fontSize: 12.5, marginTop: 4 }}>{meta}</div> : null}</div></div>{children}</Card>;
+}
+
+function Bar({ label, value, max, meta, tone = 'brand' }: { label: string; value: number; max: number; meta?: string; tone?: 'brand' | 'success' | 'danger' }) {
+  const width = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13 }}><span style={{ fontWeight: 700 }}>{label}</span><span style={{ color: 'var(--text-2)' }}>{meta ?? number(value)}</span></div><div style={{ height: 10, borderRadius: 999, background: 'var(--surface-2)', overflow: 'hidden' }}><div style={{ width: `${width}%`, height: '100%', borderRadius: 999, background: tone === 'success' ? 'var(--success)' : tone === 'danger' ? 'var(--danger)' : 'var(--brand)' }} /></div></div>;
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const max = Math.max(1, ...values); const points = values.map((v, i) => `${(i * 100) / Math.max(1, values.length - 1)},${34 - (v / max) * 28}`);
+  return <svg viewBox="0 0 100 36" preserveAspectRatio="none" style={{ width: '100%', height: 54, display: 'block' }} aria-label="روند آماری"><polyline points={points.join(' ')} fill="none" stroke="var(--brand)" strokeWidth="2.5" strokeLinecap="round" vectorEffect="non-scaling-stroke" /><line x1="0" x2="100" y1="34" y2="34" stroke="var(--border)" strokeWidth="1" /></svg>;
+}
+
+export default function Analytics() {
+  const toast = useToast();
+  const [summary, setSummary] = useState<SummaryDto | null>(null);
+  const [events, setEvents] = useState<EventsDto['events']>([]);
+  const [postDetails, setPostDetails] = useState<Record<string, PostDetails>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await api.get<SummaryDto>('/api/v1/analytics/summary?days=30');
+        const ev = await api.get<EventsDto>('/api/v1/analytics/events?limit=24');
+        const ids = (s.topPosts ?? []).slice(0, 5).map((p) => p.id);
+        const details = await Promise.allSettled(ids.map(async (id) => [id, await api.get<PostDetails>(`/api/v1/posts/${id}`)] as const));
+        const map: Record<string, PostDetails> = {};
+        for (const result of details) if (result.status === 'fulfilled') map[result.value[0]] = result.value[1];
+        if (alive) { setSummary(s); setEvents(ev.events ?? []); setPostDetails(map); }
+      } catch (e) {
+        toast.error(e instanceof ApiRequestError ? e.message : 'دریافت آمار تحلیل ناموفق بود.');
+      } finally { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [toast]);
+
+  const daily = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of summary?.daily ?? []) map.set(row.day, (map.get(row.day) ?? 0) + Number(row.count ?? 0));
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-30);
+  }, [summary]);
+
+  const errorRows = useMemo(() => {
+    const rows = new Map<string, number>();
+    for (const row of summary?.automation.errors ?? []) rows.set(`${row.eventType}::${row.errorCode}`, (rows.get(`${row.eventType}::${row.errorCode}`) ?? 0) + Number(row.count ?? 0));
+    return Array.from(rows.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([key, count]) => { const [eventType, errorCode] = key.split('::'); return { eventType, errorCode, count }; });
+  }, [summary]);
+
+  if (loading || !summary) return <PageLoading />;
+
+  const platformRows = (['telegram', 'bale', 'rubika', 'wordpress'] as PlatformKey[]).map((platform) => ({ platform, sent: summary.platforms?.[platform]?.sent ?? 0, failed: summary.platforms?.[platform]?.failed ?? 0 }));
+  const maxPlatform = Math.max(1, ...platformRows.map((p) => p.sent + p.failed));
+  const aiRate = Math.max(0, Math.min(100, summary.automation.ai.successRate ?? 0));
+  const wfRate = Math.max(0, Math.min(100, summary.automation.workflows.successRate ?? 0));
+
+  return <div style={{ display: 'grid', gap: 18 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+      <div><h1 style={{ fontSize: 22, fontWeight: 900, margin: 0 }}>تحلیل و عملکرد</h1><p style={{ color: 'var(--text-2)', margin: '6px 0 0', fontSize: 13.5 }}>نمای ۳۰ روز اخیر؛ تفکیک‌شده بر اساس محتوا، پلتفرم، خطا، اتوماسیون و درآمد</p></div>
+      <Badge tone="brand">۳۰ روز گذشته</Badge>
+    </div>
+
+    <section className="analytics-kpi-grid" style={{ display: 'grid', gap: 12 }}>
+      {[['📨','ارسال موفق',number(summary.events.sent)],['⚠️','خطای ارسال',number(summary.events.failed)],['📈','نرخ موفقیت',`${number(summary.successRate)}٪`],['🔗','کلیک لینک',number(summary.links.clicks)]].map(([icon,label,value]) => <Card key={String(label)} style={{ minWidth: 0 }}><div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ fontSize: 25 }}>{icon}</span><div><div style={{ fontSize: 21, fontWeight: 900 }}>{value}</div><div style={{ color: 'var(--text-2)', fontSize: 12.5 }}>{label}</div></div></div></Card>)}
+    </section>
+
+    <Panel title="ارسال به تفکیک پلتفرم" meta="۳۰ روز اخیر — هر پلتفرم مستقل و قابل مقایسه">
+      <div className="analytics-platform-grid" style={{ display: 'grid', gap: 14 }}>
+        {platformRows.map((p) => <div key={p.platform} style={{ padding: 14, border: '1px solid var(--border)', borderRadius: 14, background: 'var(--surface-2)' }}><div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12 }}><PlatformIcon platform={p.platform} size={24} /><strong>{PLATFORM_FA[p.platform] ?? p.platform}</strong></div><div style={{ fontSize: 25, fontWeight: 900 }}>{number(p.sent + p.failed)}</div><div style={{ display: 'flex', gap: 8, margin: '6px 0 10px', flexWrap: 'wrap' }}><Badge tone="success">موفق {number(p.sent)}</Badge><Badge tone="danger">خطا {number(p.failed)}</Badge></div><Bar label="سهم از فعالیت" value={p.sent + p.failed} max={maxPlatform} /></div>)}
+      </div>
+    </Panel>
+
+    <section className="analytics-pair-grid" style={{ display: 'grid', gap: 14 }}>
+      <Panel title="پست‌های پرتراکنش" meta="نام پست + کانال + پلتفرم + نتیجه ارسال">
+        {summary.topPosts.length === 0 ? <EmptyState icon="📊" title="داده‌ای ثبت نشده" description="با افزایش انتشار، پست‌های پرتراکنش اینجا نمایش داده می‌شوند." /> : summary.topPosts.slice(0, 5).map((p) => { const detail = postDetails[p.id]; const grouped = new Map<string, { channel: string; platform: string; sent: number; failed: number }>(); for (const t of detail?.targets ?? []) { const key = `${t.channelRef}::${t.platform}`; const row = grouped.get(key) ?? { channel: t.channelTitle || t.channelRef, platform: t.platform, sent: 0, failed: 0 }; if (t.state === 'SENT') row.sent++; if (t.state === 'FAILED') row.failed++; grouped.set(key, row); } return <div key={p.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--border)' }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}><Link to={`/dashboard/posts/${p.id}`} style={{ fontWeight: 800, textDecoration: 'none' }}>{p.title || detail?.post?.title || 'پست بدون عنوان'}</Link><Badge tone="brand">{number(p.events)} رویداد</Badge></div>{grouped.size ? <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 9 }}>{Array.from(grouped.values()).map((g) => <span key={`${g.channel}-${g.platform}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--surface-2)', fontSize: 11.5 }}><PlatformIcon platform={g.platform} size={15} />{g.channel} · {number(g.sent)} موفق · {number(g.failed)} خطا</span>)}</div> : <span style={{ color: 'var(--text-2)', fontSize: 12.5 }}>جزئیات مقصد هنوز در دسترس نیست.</span>}</div>; })}
+      </Panel>
+      <Panel title="رایج‌ترین خطاها" meta="دسته‌بندی انسانی و اقدام پیشنهادی">
+        {errorRows.length === 0 ? <EmptyState icon="✅" title="خطای قابل‌توجهی ثبت نشده" description="در این بازه خطای پرتکراری وجود ندارد." /> : errorRows.map((e) => { const info = errorInfo(e.errorCode); return <div key={`${e.eventType}-${e.errorCode}`} style={{ padding: '11px 0', borderBottom: '1px solid var(--border)' }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}><div><strong>{info.label}</strong><div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 3 }}>{EVENT_FA[e.eventType] ?? e.eventType}</div></div><Badge tone="danger">{number(e.count)}</Badge></div><div style={{ marginTop: 7, fontSize: 11.5, color: 'var(--text-2)' }}>اقدام: {info.action}</div></div>; })}
+      </Panel>
+    </section>
+
+    <section className="analytics-pair-grid" style={{ display: 'grid', gap: 14 }}>
+      <Panel title="هوش مصنوعی و گردش‌کار" meta="۳۰ روز اخیر">
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>
+          {[['هوش مصنوعی', summary.automation.ai.requested, summary.automation.ai.completed, summary.automation.ai.failed, aiRate, summary.automation.ai.tokens], ['گردش‌کار', summary.automation.workflows.started, summary.automation.workflows.completed, summary.automation.workflows.failed, wfRate, 0]].map(([label, started, completed, failed, rate, tokens]) => <div key={String(label)} style={{ padding: 14, border: '1px solid var(--border)', borderRadius: 14, background: 'var(--surface-2)' }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><strong>{label}</strong><span style={{ fontWeight: 900 }}>{number(Number(rate))}٪</span></div><div style={{ marginTop: 10 }}><Bar label="شروع" value={Number(started)} max={Math.max(1, Number(started), Number(completed), Number(failed))} /></div><div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><Badge tone="success">تکمیل {number(Number(completed))}</Badge><Badge tone="danger">شکست {number(Number(failed))}</Badge>{Number(tokens) > 0 ? <Badge tone="muted">توکن {number(Number(tokens))}</Badge> : null}</div></div>)}
+        </div>
+      </Panel>
+      <Panel title="درآمد و اشتراک" meta="۳۰ روز اخیر">
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>
+          <div style={{ padding: 13, border: '1px solid var(--border)', borderRadius: 14 }}><span style={{ color: 'var(--text-2)', fontSize: 12 }}>پرداخت موفق</span><div style={{ fontSize: 21, fontWeight: 900, marginTop: 4 }}>{money(summary.revenue.paymentsCompletedRial)}</div></div>
+          <div style={{ padding: 13, border: '1px solid var(--border)', borderRadius: 14 }}><span style={{ color: 'var(--text-2)', fontSize: 12 }}>درآمد اشتراک</span><div style={{ fontSize: 21, fontWeight: 900, marginTop: 4 }}>{money(summary.revenue.subscriptionRevenueRial)}</div></div>
+          <div style={{ padding: 13, border: '1px solid var(--border)', borderRadius: 14 }}><span style={{ color: 'var(--text-2)', fontSize: 12 }}>اشتراک جدید</span><div style={{ fontSize: 21, fontWeight: 900, marginTop: 4 }}>{number(summary.revenue.subscriptionsCreated)}</div></div>
+          <div style={{ padding: 13, border: '1px solid var(--border)', borderRadius: 14 }}><span style={{ color: 'var(--text-2)', fontSize: 12 }}>تمدید اشتراک</span><div style={{ fontSize: 21, fontWeight: 900, marginTop: 4 }}>{number(summary.revenue.subscriptionsRenewed)}</div></div>
+        </div>
+      </Panel>
+    </section>
+
+    <Panel title="روند فعالیت روزانه" meta="تجمیع تمام رویدادهای Analytics Core در ۳۰ روز">
+      <Sparkline values={daily.map(([, value]) => value)} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 8, marginTop: 8 }}>{daily.slice(-6).map(([day, value]) => <div key={day} style={{ textAlign: 'center', fontSize: 11.5, color: 'var(--text-2)' }}>{day.slice(5)}<div style={{ color: 'var(--text)', fontWeight: 800, marginTop: 3 }}>{number(value)}</div></div>)}</div>
+    </Panel>
+
+    <Panel title="گزارش رویدادهای اخیر" meta="آخرین فعالیت‌های ثبت‌شده">
+      {events.length === 0 ? <EmptyState icon="🧭" title="رویدادی ثبت نشده" description="به‌محض ثبت فعالیت‌های جدید، اینجا نمایش داده می‌شود." /> : <div style={{ display: 'grid', gap: 8 }}>{events.map((e) => <div key={e.id} style={{ display: 'grid', gridTemplateColumns: '10px minmax(0,1fr) auto', gap: 10, alignItems: 'start', padding: 10, border: '1px solid var(--border)', borderRadius: 12 }}><span style={{ width: 8, height: 8, marginTop: 6, borderRadius: '50%', background: e.name.endsWith('.failed') || e.name === 'post.failed' ? 'var(--danger)' : 'var(--brand)' }} /><div><strong style={{ fontSize: 12.5 }}>{EVENT_FA[e.name] ?? e.name}</strong><div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 3 }}>{e.subjectType} · {e.subjectId}</div></div><span style={{ fontSize: 11.5, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{faRelative(e.createdAt)}</span></div>)}</div>}
+    </Panel>
+  </div>;
+}

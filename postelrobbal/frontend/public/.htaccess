@@ -1,0 +1,85 @@
+# Postyar static SPA + public SEO pages (cPanel/LiteSpeed compatible).
+# Canonical origin: HTTPS apex. Keep this before any app-path exceptions.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Normalize www/other hosts to the canonical apex over HTTPS.
+  RewriteCond %{HTTP_HOST} !^postyarhub\.ir(?::443)?$ [NC]
+  RewriteRule ^ https://postyarhub.ir%{REQUEST_URI} [R=301,L,NE]
+
+  # Normalize plaintext HTTP. Honor a trusted HTTPS forwarding header if present.
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !^https$ [NC]
+  RewriteRule ^ https://postyarhub.ir%{REQUEST_URI} [R=301,L,NE]
+
+  # API and health endpoints are handled by the Node app; never route them to SPA.
+  RewriteCond %{REQUEST_URI} ^/(api|health)(/|$)
+  RewriteRule . - [L]
+
+  # Serve the root entry directly.
+# POSTYAR_AUTH_REACT_ROUTES_R12
+  RewriteRule ^login/?$ /index.html [L]
+  RewriteRule ^register/?$ /index.html [L]
+  RewriteRule ^index\.html$ - [L]
+
+  # Existing React SPA routes only. Static SEO directories/files bypass these rules.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^(terms|payment/result|dashboard|dashboard/(channels|posts|posts/new|posts/[A-Za-z0-9_-]+(/edit)?|bots|bots/[A-Za-z0-9_-]+|workflows|workflows/new|ai|woocommerce|campaigns|gold|analytics|subscription|wallet|referrals|notifications|settings|support|help|surveys))/?$ /index.html [L]
+
+  # Admin routes are registered as a separate top-level React route group.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^dashboard/admin(/(users|plans|payments|gateways|sms|email|channels|bots|broadcast|tickets|support-team|surveys|logs|settings(/(general|ai|gold|referral|security))?))?/?$ /index.html [L]
+
+  # Unknown non-file/non-directory routes must not silently return the homepage with HTTP 200.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ - [R=404,L]
+</IfModule>
+
+ErrorDocument 404 /404.html
+
+# Never list or expose hidden files.
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
+
+# Long-cache hashed build assets.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+
+# Browser-side hardening.
+<IfModule mod_setenvif.c>
+  SetEnvIf Request_URI "^/(dashboard|payment/result)(/|$)" POSTYAR_NOINDEX=1
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Robots-Tag "noindex, nofollow" env=POSTYAR_NOINDEX
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  Header always set X-Frame-Options "DENY"
+  Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self' blob:;"
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+  </FilesMatch>
+</IfModule>
+
+Options -Indexes
+DirectoryIndex index.html index.php
+
+# POSTYAR_AUTH_NOINDEX_R12_ADDITIVE_POLICY
+<IfModule mod_setenvif.c>
+  SetEnvIf Request_URI "^/(login|register)(/|$)" POSTYAR_AUTH_NOINDEX_R12=1
+</IfModule>
+<IfModule mod_headers.c>
+  Header always set X-Robots-Tag "noindex, nofollow" env=POSTYAR_AUTH_NOINDEX_R12
+  Header always set X-Robots-Tag "noindex, nofollow" env=REDIRECT_POSTYAR_AUTH_NOINDEX_R12
+</IfModule>

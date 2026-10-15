@@ -1,0 +1,14 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/api/v1/templates/preview'
+order: 7000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "body": "🔥 {title}\n\n{description}\n\n💰 {sale_price}\n🔗 {link}",
+      "itemType": "product"
+    }

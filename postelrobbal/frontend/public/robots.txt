@@ -1,0 +1,14 @@
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /dashboard
+Disallow: /payment/result
+Disallow: /api/
+Disallow: /health/
+
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /payment/result
+Disallow: /api/
+Disallow: /health/
+Sitemap: https://postyarhub.ir/sitemap.xml

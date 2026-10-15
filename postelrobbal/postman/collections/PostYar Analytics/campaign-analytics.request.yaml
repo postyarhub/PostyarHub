@@ -1,0 +1,15 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/analytics/campaigns/:campaign_id?days=30'
+order: 4000
+headers:
+  - key: Accept
+    value: application/json
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+pathVariables:
+  - key: campaign_id
+    value: 'REPLACE_WITH_CAMPAIGN_ID'

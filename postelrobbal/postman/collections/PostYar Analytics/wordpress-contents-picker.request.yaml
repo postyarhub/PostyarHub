@@ -1,0 +1,14 @@
+$kind: http-request
+name: wordpress contents picker
+method: GET
+url: '{{base_url}}/wordpress/contents'
+order: 5000
+queryParams:
+  - key: page
+    value: '1'
+  - key: pageSize
+    value: '100'
+  - key: siteId
+    value: '{{site_id}}'
+  - key: q
+    value: 'آموزش'
