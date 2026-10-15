@@ -346,7 +346,7 @@ export function DashboardLayout() {
           key={item.to}
           to={item.to}
           end={item.to === '/dashboard'}
-          title={sidebarCollapsed ? item.label : undefined}
+          data-tooltip={sidebarCollapsed ? item.label : undefined}
           aria-label={item.label}
           className={({ isActive }) => `dash-nav__item${isActive ? ' is-active' : ''}`}
         >

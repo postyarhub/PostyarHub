@@ -325,15 +325,15 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
     items: [
       { to: '/dashboard/admin', icon: 'adminDashboard', label: 'داشبورد مدیریت', short: 'داشبورد', end: true },
       { to: '/dashboard/admin/users', icon: 'users', label: 'کاربران', short: 'کاربران' },
-      { to: '/dashboard/admin/channels', icon: 'channels', label: 'کانال‌ها', short: 'کانال‌ها' },
-      { to: '/dashboard/admin/bots', icon: 'bots', label: 'ربات‌ها', short: 'ربات‌ها' },
+      { to: '/dashboard/admin/channels', icon: 'adminChannels', label: 'کانال‌ها', short: 'کانال‌ها' },
+      { to: '/dashboard/admin/bots', icon: 'adminBots', label: 'ربات‌ها', short: 'ربات‌ها' },
     ],
   },
   {
     group: 'مالی',
     items: [
-      { to: '/dashboard/admin/plans', icon: 'subscription', label: 'اشتراک‌ها (پلن‌ها)', short: 'پلن‌ها' },
-      { to: '/dashboard/admin/payments', icon: 'wallet', label: 'پرداخت‌ها', short: 'پرداخت‌ها' },
+      { to: '/dashboard/admin/plans', icon: 'adminPlans', label: 'اشتراک‌ها (پلن‌ها)', short: 'پلن‌ها' },
+      { to: '/dashboard/admin/payments', icon: 'adminPayments', label: 'پرداخت‌ها', short: 'پرداخت‌ها' },
       { to: '/dashboard/admin/gateways', icon: 'gateway', label: 'درگاه پرداخت', short: 'درگاه' },
     ],
   },
@@ -342,7 +342,7 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
     items: [
       { to: '/dashboard/admin/sms', icon: 'sms', label: 'پیامک', short: 'پیامک' },
       { to: '/dashboard/admin/email', icon: 'email', label: 'ایمیل', short: 'ایمیل' },
-      { to: '/dashboard/admin/tickets', icon: 'support', label: 'تیکت‌های پشتیبانی', short: 'تیکت‌ها' },
+      { to: '/dashboard/admin/tickets', icon: 'adminTickets', label: 'تیکت‌های پشتیبانی', short: 'تیکت‌ها' },
       { to: '/dashboard/admin/support-team', icon: 'supportTeam', label: 'تیم پشتیبانی', short: 'پشتیبان‌ها' },
       { to: '/dashboard/admin/broadcast', icon: 'broadcast', label: 'اطلاع‌رسانی', short: 'اطلاع‌رسانی' },
     ],
@@ -350,13 +350,13 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
   {
     group: 'تنظیمات',
     items: [
-      { to: '/dashboard/admin/settings', icon: 'settings', label: 'مرکز تنظیمات', short: 'تنظیمات', end: true },
+      { to: '/dashboard/admin/settings', icon: 'adminSettings', label: 'مرکز تنظیمات', short: 'تنظیمات', end: true },
       { to: '/dashboard/admin/settings/general', icon: 'settingsGeneral', label: 'تنظیمات عمومی', short: 'عمومی' },
-      { to: '/dashboard/admin/settings/ai', icon: 'ai', label: 'هوش مصنوعی', short: 'هوش مصنوعی' },
-      { to: '/dashboard/admin/settings/gold', icon: 'gold', label: 'ربات طلا و سکه', short: 'طلا' },
-      { to: '/dashboard/admin/settings/referral', icon: 'referrals', label: 'زیرمجموعه‌گیری', short: 'زیرمجموعه' },
-      { to: '/dashboard/admin/settings/security', icon: 'admin', label: 'امنیت', short: 'امنیت' },
-      { to: '/dashboard/admin/logs', icon: 'analytics', label: 'گزارش رویداد', short: 'رویدادها' },
+      { to: '/dashboard/admin/settings/ai', icon: 'adminAiSettings', label: 'هوش مصنوعی', short: 'هوش مصنوعی' },
+      { to: '/dashboard/admin/settings/gold', icon: 'adminGoldSettings', label: 'ربات طلا و سکه', short: 'طلا' },
+      { to: '/dashboard/admin/settings/referral', icon: 'adminReferrals', label: 'زیرمجموعه‌گیری', short: 'زیرمجموعه' },
+      { to: '/dashboard/admin/settings/security', icon: 'adminSecurity', label: 'امنیت', short: 'امنیت' },
+      { to: '/dashboard/admin/logs', icon: 'adminLogs', label: 'گزارش رویداد', short: 'رویدادها' },
     ],
   },
 ];
