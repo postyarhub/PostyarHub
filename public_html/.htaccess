@@ -66,14 +66,16 @@ ErrorDocument 404 /404.html
   AddOutputFilterByType BROTLI_COMPRESS application/javascript text/javascript application/json application/manifest+json application/xml
   AddOutputFilterByType BROTLI_COMPRESS image/svg+xml
 </IfModule>
-<IfModule mod_deflate.c>
-  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
-  AddOutputFilterByType DEFLATE application/javascript text/javascript application/json application/manifest+json application/xml
-  AddOutputFilterByType DEFLATE image/svg+xml
+<IfModule !mod_brotli.c>
+  <IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+    AddOutputFilterByType DEFLATE application/javascript text/javascript application/json application/manifest+json application/xml
+    AddOutputFilterByType DEFLATE image/svg+xml
+  </IfModule>
 </IfModule>
 <IfModule mod_headers.c>
   Header append Vary Accept-Encoding
-  <FilesMatch "\\-[A-Za-z0-9_-]{8,}\\.(js|css|webp|woff2|svg|png|jpe?g|ico)$">
+  <FilesMatch "-[A-Za-z0-9_-]{8,}\.(js|css|webp|woff2|svg|png|jpe?g|ico)$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
 </IfModule>
