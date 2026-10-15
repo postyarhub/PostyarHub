@@ -305,20 +305,60 @@
   }
 }
 
-.dash-shell { flex: 1; display: flex; max-width: 1400px; margin: 0 auto; width: 100%; }
+.dash-shell { flex: 1; display: flex; width: 100%; max-width: none; margin: 0; align-items: flex-start; }
 
-/* Desktop sidebar — always expanded, fixed width (Task 14-a: no toggle) */
+/* Desktop sidebar — right-edge anchored; collapses to an icon rail. */
 .dash-sidebar {
   width: 262px;
-  flex-shrink: 0;
-  padding: 18px 12px;
+  flex: 0 0 262px;
+  box-sizing: border-box;
+  padding: 14px 8px;
   border-left: 1px solid var(--border);
   background: var(--surface);
+  height: calc(100vh - 62px);
   max-height: calc(100vh - 62px);
   overflow-y: auto;
   position: sticky;
   top: 62px;
+  align-self: flex-start;
+  transition: width 180ms ease, flex-basis 180ms ease;
 }
+.dash-sidebar__head {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 7px 10px;
+  margin: 0 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+.dash-sidebar__title { font-size: 13px; font-weight: 900; color: var(--text); }
+.dash-sidebar__toggle {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--surface);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+.dash-sidebar__toggle:hover { color: var(--brand-strong); background: var(--surface-2); border-color: var(--brand); }
+.dash-sidebar__toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.dash-sidebar__toggle-label { white-space: nowrap; font-size: 11.5px; font-weight: 750; }
+.dash-root.is-sidebar-collapsed .dash-sidebar { width: 76px; flex-basis: 76px; padding-inline: 7px; }
+.dash-root.is-sidebar-collapsed .dash-sidebar__head { justify-content: center; padding-inline: 0; }
+.dash-root.is-sidebar-collapsed .dash-nav__item { justify-content: center; gap: 0; padding-inline: 6px; }
+.dash-root.is-sidebar-collapsed .dash-nav__item > span { display: none; }
+.dash-root.is-sidebar-collapsed .dash-sidebar__toggle { padding: 0; }
+.dash-root.is-sidebar-collapsed .dash-sidebar__toggle-label { display: none; }
 .dash-main { flex: 1; padding: 22px 20px; min-width: 0; }
 
 .dash-nav { display: grid; gap: 3px; }
@@ -335,6 +375,7 @@
   min-height: 42px;
 }
 .dash-nav__item svg { flex-shrink: 0; opacity: 0.85; }
+.dash-nav__item:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .dash-nav__item:hover { background: var(--surface-2); color: var(--text); }
 .dash-nav__item.is-active {
   background: var(--brand-soft);

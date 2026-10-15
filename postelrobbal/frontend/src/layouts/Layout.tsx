@@ -199,8 +199,8 @@ const NAV_ITEMS: Array<{ to: string; icon: NavIconName; label: string; short?: s
   { to: '/dashboard/workflows', icon: 'workflows', label: 'گردش‌کارها' },
   { to: '/dashboard/ai', icon: 'ai', label: 'هوش مصنوعی' },
   { to: '/dashboard/woocommerce', icon: 'woocommerce', label: 'مدیریت وب‌سایت' },
-  { to: '/dashboard/campaigns', icon: 'analytics', label: 'کمپین‌ها' },
-  { to: '/dashboard/surveys', icon: 'analytics', label: 'نظرسنجی‌ها', short: 'نظرسنجی' },
+  { to: '/dashboard/campaigns', icon: 'campaigns', label: 'کمپین‌ها' },
+  { to: '/dashboard/surveys', icon: 'surveys', label: 'نظرسنجی‌ها', short: 'نظرسنجی' },
   { to: '/dashboard/gold', icon: 'gold', label: 'ربات نرخ لحظه‌ای طلا و سکه', short: 'نرخ طلا' },
   { to: '/dashboard/analytics', icon: 'analytics', label: 'تحلیل آمار' },
   { to: '/dashboard/subscription', icon: 'subscription', label: 'اشتراک و پلن‌ها' },
@@ -236,6 +236,19 @@ export function DashboardLayout() {
   const [unread, setUnread] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetClosing, setSheetClosing] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return window.localStorage.getItem('postyar-dashboard-sidebar-collapsed') === '1'; }
+    catch { return false; }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('postyar-dashboard-sidebar-collapsed', sidebarCollapsed ? '1' : '0');
+    } catch {
+      // Storage can be disabled by privacy settings; collapse still works for this session.
+    }
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (!loading && !me) navigate('/?auth=login', { replace: true });
@@ -333,6 +346,8 @@ export function DashboardLayout() {
           key={item.to}
           to={item.to}
           end={item.to === '/dashboard'}
+          title={sidebarCollapsed ? item.label : undefined}
+          aria-label={item.label}
           className={({ isActive }) => `dash-nav__item${isActive ? ' is-active' : ''}`}
         >
           <NavIcon name={item.icon} size={21} />
@@ -345,7 +360,7 @@ export function DashboardLayout() {
   const sheetVisible = sheetOpen || sheetClosing;
 
   return (
-    <div className="dash-root">
+    <div className={`dash-root${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
       <header className="dash-topbar">
         <div className="dash-topbar__inner">
           <Link to="/dashboard" className="dash-topbar__brand" aria-label="پُست‌یار — داشبورد">
@@ -459,7 +474,23 @@ export function DashboardLayout() {
       </header>
 
       <div className="dash-shell">
-        <aside className="dash-sidebar">
+        <aside className="dash-sidebar" aria-label="ناوبری اصلی پیشخوان">
+          <div className="dash-sidebar__head">
+            {!sidebarCollapsed && <span className="dash-sidebar__title">پُست‌یار</span>}
+            <button
+              type="button"
+              className="dash-sidebar__toggle"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+              aria-label={sidebarCollapsed ? 'گسترش نوار کناری' : 'جمع کردن نوار کناری'}
+              title={sidebarCollapsed ? 'گسترش نوار کناری' : 'جمع کردن نوار کناری'}
+              aria-expanded={!sidebarCollapsed}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {sidebarCollapsed ? <path d="m9 5 7 7-7 7" /> : <path d="m15 5-7 7 7 7" />}
+              </svg>
+              {!sidebarCollapsed && <span className="dash-sidebar__toggle-label">جمع کردن</span>}
+            </button>
+          </div>
           {sidebarNav}
         </aside>
         <main className="dash-main">
