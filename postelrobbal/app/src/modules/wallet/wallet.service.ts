@@ -297,7 +297,7 @@ export async function getWalletSummary(tenantId: string): Promise<WalletSummary>
     .select()
     .from(walletLedger)
     .where(eq(walletLedger.tenantId, tenantId))
-    .orderBy(desc(walletLedger.createdAt))
+    .orderBy(desc(walletLedger.createdAt), desc(walletLedger.id))
     .limit(20);
 
   return {
