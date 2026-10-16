@@ -1,6 +1,6 @@
 import { and, count, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { payments, systemSettings, tickets, users } from '../../db/schema.js';
+import { payments, systemSettings, tickets, users, surveys } from '../../db/schema.js';
 
 /**
  * Admin bell (round 18, asovin «اعلان‌های سیستمی مدیر» parity, extended).
@@ -23,6 +23,7 @@ export interface BellEntityRef {
 export interface AdminBellSnapshot {
   lastSeenAt: string | null;
   pendingPayments: { count: number; unread: number; latest: BellEntityRef[] };
+  pendingSurveys: { count: number; unread: number; latest: BellEntityRef[] };
   openTickets: { count: number; unread: number; latest: BellEntityRef[] };
   newUsers: { count: number; unread: number; latest: BellEntityRef[] };
   unreadTotal: number;
@@ -153,6 +154,27 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
     .orderBy(desc(users.createdAt))
     .limit(5);
 
+  const surveyAggRows = await db
+    .select({
+      total: count(),
+      unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${surveys.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
+    })
+    .from(surveys)
+    .where(eq(surveys.status, 'PENDING'));
+
+  const surveyLatest = await db
+    .select({
+      id: surveys.id,
+      question: surveys.question,
+      email: users.email,
+      createdAt: surveys.createdAt,
+    })
+    .from(surveys)
+    .leftJoin(users, eq(users.id, surveys.creatorId))
+    .where(eq(surveys.status, 'PENDING'))
+    .orderBy(desc(surveys.createdAt))
+    .limit(5);
+
   const toAgg = (rows: Array<{ total: number; unread: string | number | null }>): AggRow => ({
     total: num(rows[0]?.total),
     unread: num(rows[0]?.unread),
@@ -178,13 +200,24 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
       createdAt: r.createdAt ? r.createdAt.toISOString() : null,
     })),
   };
+  const pendingSurveys = {
+    count: toAgg(surveyAggRows).total,
+    unread: toAgg(surveyAggRows).unread,
+    latest: surveyLatest.map((r) => ({
+      id: r.id,
+      title: r.question,
+      sub: r.email ?? 'ثبت‌کنندهٔ نظرسنجی',
+      createdAt: r.createdAt ? r.createdAt.toISOString() : null,
+    })),
+  };
 
   return {
     lastSeenAt,
     pendingPayments,
+    pendingSurveys,
     openTickets,
     newUsers,
-    unreadTotal: pendingPayments.unread + openTickets.unread + newUsers.unread,
+    unreadTotal: pendingPayments.unread + pendingSurveys.unread + openTickets.unread + newUsers.unread,
   };
 }
 
