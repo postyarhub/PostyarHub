@@ -59,7 +59,7 @@ const buttonTargetSchema = z.discriminatedUnion('type', [
 const buttonItemSchema = z.object({
   label: z.string().min(1).max(64),
   target: buttonTargetSchema.optional(),
-  url: z.string().url().max(255).optional(),
+  url: buttonUrlSchema.optional(),
   callback: z.string().max(64).optional(),
 });
 
@@ -82,7 +82,7 @@ const buttonsSchema = z.object({
   // Legacy shapes remain accepted so existing drafts/posts are not broken.
   inline: z.array(buttonItemSchema).max(8).optional(),
   links: z
-    .array(z.object({ label: z.string().min(1).max(64), url: z.string().url().max(255) }))
+    .array(z.object({ label: z.string().min(1).max(64), url: buttonUrlSchema }))
     .max(8)
     .optional(),
 });
