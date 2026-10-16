@@ -209,11 +209,13 @@ export async function httpMultipartJson<T>(
   fields: Record<string, string>,
   file: HttpMultipartFile,
   timeoutMs = 30_000,
+  ssrfGuard = true,
 ): Promise<{ status: number; data: T }> {
   const encoded = encodeMultipartBody(fields, file);
   const res = await httpRaw(url, {
     method: 'POST',
     timeoutMs,
+    ssrfGuard,
     headers: { 'content-type': encoded.contentType },
     body: encoded.body,
   });
@@ -292,14 +294,39 @@ async function nativeHttpBuffer(url: string, options: HttpOptions, resolvedAddre
  * pinned into the socket, so validation and connection do not use two resolvers. */
 export async function httpBuffer(url: string, options: HttpOptions = {}): Promise<HttpBufferResult> {
   let currentUrl = url;
+  const totalTimeoutMs = options.timeoutMs ?? 25_000;
+  const startedAt = Date.now();
+  let requestOptions = options;
+  let previousOrigin: string | null = null;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+    const remainingMs = totalTimeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) throw new AppError(ERR.PROVIDER_UNAVAILABLE());
     const guarded = await resolveSafeUrl(currentUrl);
-    const res = await nativeHttpBuffer(currentUrl, options, guarded.address, guarded.family);
+    const currentOrigin = guarded.url.origin;
+    if (previousOrigin !== null && currentOrigin !== previousOrigin) {
+      // Never forward credentials or cookies to a redirect-selected origin.
+      const safeHeaders = Object.fromEntries(Object.entries(requestOptions.headers ?? {})
+        .filter(([name]) => !/^(authorization|proxy-authorization|cookie|cookie2|x-api-key|x-auth-token|x-access-token)$/i.test(name)));
+      requestOptions = { ...requestOptions, headers: safeHeaders };
+    }
+    const res = await nativeHttpBuffer(
+      currentUrl,
+      { ...requestOptions, timeoutMs: remainingMs },
+      guarded.address,
+      guarded.family,
+    );
     if (res.status >= 300 && res.status < 400) {
       const location = res.location;
       if (!location) return res;
       if (redirects === MAX_REDIRECTS) return res;
-      currentUrl = new URL(location, guarded.url).toString();
+      previousOrigin = currentOrigin;
+      let next: URL;
+      try {
+        next = new URL(location, guarded.url);
+      } catch {
+        throw new AppError(ERR.PROVIDER_UNAVAILABLE());
+      }
+      currentUrl = next.toString();
       continue;
     }
     return res;
