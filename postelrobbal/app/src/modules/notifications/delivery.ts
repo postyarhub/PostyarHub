@@ -3,6 +3,7 @@ import { getDb } from '../../db/client.js';
 import { notifications, notificationOutbound, users, channels } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
 import { enqueue } from '../../queue/queues.js';
+import { getRedis } from '../../queue/connection.js';
 import { getProvider } from '../../providers/index.js';
 import { decryptSecret } from '../../security/encryption.js';
 import { emitEvent } from '../../core/events.js';
@@ -39,17 +40,39 @@ export async function notifyTenant(input: {
   }
 }
 
-export async function enqueuePasswordResetDelivery(userId: string, token: string): Promise<void> {
+export const PASSWORD_RESET_DELIVERY_KEY_PREFIX = 'postyar:password-reset-delivery:';
+export const PASSWORD_RESET_DELIVERY_TTL_SECONDS = 30 * 60;
+
+export async function deletePasswordResetDeliveryToken(resetTokenId: string): Promise<void> {
+  await getRedis().del(`${PASSWORD_RESET_DELIVERY_KEY_PREFIX}${resetTokenId}`);
+}
+
+export async function enqueuePasswordResetDelivery(
+  userId: string,
+  resetTokenId: string,
+  token: string,
+): Promise<void> {
   const db = getDb();
   const [user] = await db.select({ email: users.email, mobile: users.mobile }).from(users).where(eq(users.id, userId)).limit(1);
   if (!user) return;
-  await enqueue('notifications', 'password-reset', {
-    kind: 'PASSWORD_RESET',
-    tenantId: userId,
-    email: user.email,
-    mobile: user.mobile,
-    token,
-  });
+  const redis = getRedis();
+  const key = `${PASSWORD_RESET_DELIVERY_KEY_PREFIX}${resetTokenId}`;
+  const stored = await redis.set(key, token, 'EX', PASSWORD_RESET_DELIVERY_TTL_SECONDS);
+  if (stored !== 'OK') throw new Error('PASSWORD_RESET_DELIVERY_TOKEN_STORE_FAILED');
+  try {
+    // The queue payload contains only an opaque database row ID. Completed and
+    // failed BullMQ job retention therefore cannot retain the reset secret.
+    await enqueue('notifications', 'password-reset', {
+      kind: 'PASSWORD_RESET',
+      tenantId: userId,
+      email: user.email,
+      mobile: user.mobile,
+      passwordResetTokenId: resetTokenId,
+    });
+  } catch (err) {
+    await redis.del(key).catch(() => undefined);
+    throw err;
+  }
 }
 
 /**
