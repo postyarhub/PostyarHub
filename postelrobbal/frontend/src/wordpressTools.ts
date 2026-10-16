@@ -193,7 +193,7 @@ function safePostyarExternalHttpUrl(value: unknown): string {
 
 function showCampaignPickerDetail(item: AnyRecord, type: 'product' | 'content') {
   const title = esc(item.title ?? 'بدون عنوان');
-  const image = String(item.customImageUrl ?? item.imageUrl ?? '').trim();
+  const image = safePostyarExternalHttpUrl(item.customImageUrl ?? item.imageUrl);
   const categories = Array.isArray(item.categories)
     ? item.categories.map((entry) => esc(typeof entry === 'object' && entry !== null ? (entry as AnyRecord).name ?? '' : entry)).filter(Boolean).join('، ')
     : '';
