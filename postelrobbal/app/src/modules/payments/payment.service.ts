@@ -114,8 +114,42 @@ async function createPaymentRow(input: {
   const env = loadEnv();
   const id = newId();
   const gw = await gatewayFor();
+
+  let chargeAmountRial = input.amountRial;
+  let persistedMeta = input.metaJson;
+  if (gw.id === 'winapay') {
+    if (input.purpose === 'WALLET_TOPUP' && chargeAmountRial % 10 !== 0) {
+      throw new AppError(ERR.VALIDATION('برای پرداخت ویناپی، مبلغ شارژ باید مضربی از ۱۰ ریال باشد.'));
+    }
+    if (input.purpose === 'SUBSCRIPTION') {
+      // WinaPay accepts whole Toman only. Store, verify, credit and display the
+      // exact Rial amount that the gateway actually charges, never the
+      // pre-rounded amount that would cause a payment/ledger mismatch.
+      chargeAmountRial = Math.floor(chargeAmountRial / 10) * 10;
+      if (chargeAmountRial < 1_000) {
+        throw new AppError(ERR.VALIDATION('حداقل مبلغ قابل پرداخت با ویناپی ۱۰۰ تومان است.'));
+      }
+      const adjustment = input.amountRial - chargeAmountRial;
+      if (adjustment > 0) {
+        const meta: Record<string, unknown> = { ...(input.metaJson ?? {}), providerRoundingAdjustmentRial: adjustment };
+        const pricing = meta['pricing'];
+        if (pricing && typeof pricing === 'object' && !Array.isArray(pricing)) {
+          const p = pricing as Record<string, unknown>;
+          const listAmount = Number(p['listAmountRial'] ?? input.amountRial);
+          meta['pricing'] = {
+            ...p,
+            finalAmountRial: chargeAmountRial,
+            discountAmountRial: Math.max(0, listAmount - chargeAmountRial),
+            providerRoundingAdjustmentRial: adjustment,
+          };
+        }
+        persistedMeta = meta;
+      }
+    }
+  }
+
   const created = await gw.createPayment({
-    amountRial: input.amountRial,
+    amountRial: chargeAmountRial,
     description: input.description,
     callbackUrl: `${env.API_URL}/api/v1/payments/callback?paymentId=${id}`,
   });
@@ -125,18 +159,18 @@ async function createPaymentRow(input: {
     purpose: input.purpose,
     planId: input.planId,
     months: input.months,
-    amountRial: input.amountRial,
+    amountRial: chargeAmountRial,
     gateway: gw.id,
     authority: created.authority,
     state: 'CREATED',
-    metaJson: input.metaJson,
+    metaJson: persistedMeta,
   });
   await emitEvent({
     name: 'payment.created',
     tenantId: input.tenantId,
     subjectType: 'payment',
     subjectId: id,
-    props: { purpose: input.purpose, amountRial: input.amountRial },
+    props: { purpose: input.purpose, amountRial: chargeAmountRial },
   });
   return { paymentId: id, redirectUrl: created.redirectUrl };
 }
