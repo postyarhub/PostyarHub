@@ -1,0 +1,112 @@
+name: PostYar security release bundle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'postelrobbal/app/**'
+      - 'postelrobbal/frontend/**'
+      - 'postelrobbal/api/package.json'
+      - 'postelrobbal/api/package-lock.json'
+      - 'postelrobbal/wordpress-plugin/postyar-wordpress/**'
+      - '.github/workflows/postyar-security-release-bundle.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-release-bundle:
+    name: Build one prebuilt production release bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            postelrobbal/app/package-lock.json
+            postelrobbal/frontend/package-lock.json
+
+      - name: Compile backend release artifact
+        working-directory: postelrobbal/app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Compile frontend release artifact
+        working-directory: postelrobbal/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assemble release bundle and integrity manifests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          OUT="$RUNNER_TEMP/postyar-release-output"
+          STAGE="$RUNNER_TEMP/postyar-release-stage"
+          RELEASE="$STAGE/POSTYAR-SECURITY-RELEASE-20261016"
+          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/wordpress-plugin"
+
+          # Source + exact compiled output. Never package node_modules, .env, logs, backups,
+          # user files, runtime data, database files or host configuration.
+          cp -a postelrobbal/app/src "$RELEASE/postelrobbal/app/"
+          cp -a postelrobbal/app/dist "$RELEASE/postelrobbal/app/"
+          cp -a postelrobbal/app/package.json postelrobbal/app/package-lock.json postelrobbal/app/tsconfig.json postelrobbal/app/tsconfig.build.json "$RELEASE/postelrobbal/app/"
+
+          cp -a postelrobbal/frontend/src "$RELEASE/postelrobbal/frontend/"
+          cp -a postelrobbal/frontend/public "$RELEASE/postelrobbal/frontend/"
+          cp -a postelrobbal/frontend/dist "$RELEASE/postelrobbal/frontend/"
+          cp -a postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json postelrobbal/frontend/vite.config.ts postelrobbal/frontend/tsconfig.json postelrobbal/frontend/index.html "$RELEASE/postelrobbal/frontend/"
+
+          cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
+          cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
+
+          printf 'release_commit=%s\n' "$(git rev-parse HEAD)" > "$RELEASE/_release/metadata.txt"
+          printf 'release_branch=%s\n' "${GITHUB_REF_NAME:-unknown}" >> "$RELEASE/_release/metadata.txt"
+          printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$RELEASE/_release/metadata.txt"
+          printf 'backend_build=completed\nfrontend_build=completed\n' >> "$RELEASE/_release/metadata.txt"
+
+          # Manifest paths are relative to the release root and never use /dev/fd/process substitution.
+          : > "$RUNNER_TEMP/postyar-release-files0"
+          find "$RELEASE" -type f ! -path "$RELEASE/_release/files-sha256.txt" -print0 > "$RUNNER_TEMP/postyar-release-files0"
+          while IFS= read -r -d '' file; do
+            rel="${file#"$RELEASE"/}"
+            (cd "$RELEASE" && sha256sum "$rel") >> "$RELEASE/_release/files-sha256.txt"
+          done < "$RUNNER_TEMP/postyar-release-files0"
+          (cd "$RELEASE" && sha256sum -c _release/files-sha256.txt)
+
+          BUNDLE="$OUT/POSTYAR-SECURITY-RELEASE-20261016.tar.gz"
+          tar -czf "$BUNDLE" -C "$STAGE" POSTYAR-SECURITY-RELEASE-20261016
+          tar -tzf "$BUNDLE" >/dev/null
+          (cd "$OUT" && sha256sum "$(basename "$BUNDLE")" > "$(basename "$BUNDLE").sha256" && sha256sum -c "$(basename "$BUNDLE").sha256")
+
+          # Standalone WordPress plugin package. The outer folder is the plugin directory name.
+          mkdir -p "$STAGE/wp-plugin"
+          cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$STAGE/wp-plugin/"
+          (cd "$STAGE/wp-plugin" && zip -qr "$OUT/POSTYAR-WORDPRESS-SECURITY-20261016.zip" postyar-wordpress)
+          unzip -tq "$OUT/POSTYAR-WORDPRESS-SECURITY-20261016.zip"
+          (cd "$OUT" && sha256sum POSTYAR-WORDPRESS-SECURITY-20261016.zip > POSTYAR-WORDPRESS-SECURITY-20261016.zip.sha256 && sha256sum -c POSTYAR-WORDPRESS-SECURITY-20261016.zip.sha256)
+
+          chmod 600 "$OUT"/*
+          printf '[OK] Release commit: %s\n' "$(git rev-parse HEAD)"
+          printf '[OK] Production bundle: %s\n' "$BUNDLE"
+          printf '[OK] Plugin update package: %s\n' "$OUT/POSTYAR-WORDPRESS-SECURITY-20261016.zip"
+
+      - name: Upload the single release bundle set
+        uses: actions/upload-artifact@v4
+        with:
+          name: postyar-security-release-20261016
+          path: |
+            ${{ runner.temp }}/postyar-release-output/POSTYAR-SECURITY-RELEASE-20261016.tar.gz
+            ${{ runner.temp }}/postyar-release-output/POSTYAR-SECURITY-RELEASE-20261016.tar.gz.sha256
+            ${{ runner.temp }}/postyar-release-output/POSTYAR-WORDPRESS-SECURITY-20261016.zip
+            ${{ runner.temp }}/postyar-release-output/POSTYAR-WORDPRESS-SECURITY-20261016.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
