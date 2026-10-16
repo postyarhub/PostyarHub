@@ -110,6 +110,7 @@ export function normalizePlanPricing(raw: unknown): PlanPricing {
  */
 export async function hasUnexpiredSubscription(tenantId: string): Promise<boolean> {
   const db = getDb();
+  const now = new Date();
   const [row] = await db
     .select({ id: subscriptions.id })
     .from(subscriptions)
@@ -117,7 +118,8 @@ export async function hasUnexpiredSubscription(tenantId: string): Promise<boolea
       and(
         eq(subscriptions.tenantId, tenantId),
         eq(subscriptions.state, 'ACTIVE'),
-        gt(subscriptions.expiresAt, new Date())
+        lte(subscriptions.startedAt, now),
+        gt(subscriptions.expiresAt, now)
       )
     )
     .limit(1);
