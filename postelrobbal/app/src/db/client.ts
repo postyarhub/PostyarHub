@@ -1,4 +1,4 @@
-import { drizzle } from 'drizzle-orm/mysql2';
+import { drizzle, type MySql2Database } from 'drizzle-orm/mysql2';
 import mysql from 'mysql2/promise';
 import { loadEnv } from '../config/env.js';
 import * as schema from './schema.js';
@@ -51,7 +51,10 @@ export async function initializeDbSessions(): Promise<void> {
   }
 }
 
-export type Db = ReturnType<typeof drizzle>;
+// Keep the schema generic in the shared DB type. Drizzle ORM 0.45 tightened
+// its generic typing; the unparameterized ReturnType<typeof drizzle> erased
+// the schema and made typed transaction callbacks incompatible.
+export type Db = MySql2Database<typeof schema> & { $client: mysql.Pool };
 
 export function getDb(): Db {
   return drizzle(getPool(), { schema, mode: 'default' });
