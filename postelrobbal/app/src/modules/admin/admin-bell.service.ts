@@ -81,7 +81,7 @@ function ticketRef(row: { id: string; subject: string; createdAt: Date | null; e
 
 const num = (v: unknown): number => Number(v ?? 0);
 
-export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSnapshot> {
+export async function getAdminBellSnapshot(adminId: string, includeManagementDetails = true): Promise<AdminBellSnapshot> {
   const db = getDb();
   const lastSeenAt = await readBellSeenAt(adminId);
   const seenDate = lastSeenAt ? new Date(lastSeenAt) : new Date(0);
@@ -92,15 +92,15 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
   // marker exists yet makes every present row count as unread) and one
   // "latest 5" query with only the needed columns. Four categories are
   // included: pending payments, pending surveys, open tickets, and new users.
-  const payAggRows = await db
+  const payAggRows = includeManagementDetails ? await db
     .select({
       total: count(),
       unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${payments.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
     })
     .from(payments)
-    .where(eq(payments.state, 'PENDING_REVIEW'));
+    .where(eq(payments.state, 'PENDING_REVIEW')) : [];
 
-  const payLatest = await db
+  const payLatest = includeManagementDetails ? await db
     .select({
       id: payments.id,
       amountRial: payments.amountRial,
@@ -111,7 +111,7 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
     .leftJoin(users, eq(users.id, payments.tenantId))
     .where(eq(payments.state, 'PENDING_REVIEW'))
     .orderBy(desc(payments.createdAt))
-    .limit(5);
+    .limit(5) : [];
 
   const ticketAggRows = await db
     .select({
@@ -134,7 +134,7 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
     .orderBy(desc(tickets.createdAt))
     .limit(5);
 
-  const userAggRows = await db
+  const userAggRows = includeManagementDetails ? await db
     .select({
       total: count(),
       unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${users.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
@@ -153,28 +153,30 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
     .from(users)
     .where(and(eq(users.role, 'USER'), sql`${users.createdAt} >= ${since7d}`))
     .orderBy(desc(users.createdAt))
-    .limit(5);
+    .limit(5) : [];
 
-  const surveyAggRows = await db
+  const surveyAggRows = includeManagementDetails ? await db
     .select({
       total: count(),
       unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${surveys.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
     })
     .from(surveys)
-    .where(eq(surveys.status, 'PENDING'));
+    .where(eq(surveys.status, 'PENDING')) : [];
 
-  const surveyLatest = await db
+  const surveyLatest = includeManagementDetails ? await db
     .select({
       id: surveys.id,
       question: surveys.question,
       email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
       createdAt: surveys.createdAt,
     })
     .from(surveys)
     .leftJoin(users, eq(users.id, surveys.creatorId))
     .where(eq(surveys.status, 'PENDING'))
     .orderBy(desc(surveys.createdAt))
-    .limit(5);
+    .limit(5) : [];
 
   const toAgg = (rows: Array<{ total: number; unread: string | number | null }>): AggRow => ({
     total: num(rows[0]?.total),
@@ -207,7 +209,7 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
     latest: surveyLatest.map((r) => ({
       id: r.id,
       title: r.question,
-      sub: r.email ?? 'ثبت‌کنندهٔ نظرسنجی',
+      sub: r.email ?? (`${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || 'ثبت‌کنندهٔ نظرسنجی'),
       createdAt: r.createdAt ? r.createdAt.toISOString() : null,
     })),
   };
