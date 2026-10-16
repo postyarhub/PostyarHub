@@ -68,7 +68,7 @@ export class IdpayAdapter implements PaymentGatewayAdapter {
   }
 
   async verifyPayment(amountRial: number, authority: string): Promise<VerifiedPayment> {
-    void amountRial; // IDPay verify echoes the amount; the id/track_id are authoritative
+    if (!Number.isSafeInteger(amountRial) || amountRial <= 0) return { ok: false, code: -99 };
     const apiKey = this.credential();
     if (!apiKey) {
       throw new AppError(ERR.GATEWAY_NOT_CONFIGURED());
@@ -89,6 +89,12 @@ export class IdpayAdapter implements PaymentGatewayAdapter {
     const code = data?.status ?? -99;
     // 100 = verified; 101 = already verified (idempotent re-verify)
     if (code === 100 || code === 101) {
+      // Verify the transaction amount as well as its ID/status. If IDPay omits
+      // the amount or reports a different Rial value, do not settle the payment.
+      const verifiedAmount = Number(data?.amount);
+      if (!Number.isSafeInteger(verifiedAmount) || verifiedAmount !== amountRial) {
+        return { ok: false, code: -98 };
+      }
       return { ok: true, refId: String(data?.track_id ?? ''), code };
     }
     return { ok: false, code };
