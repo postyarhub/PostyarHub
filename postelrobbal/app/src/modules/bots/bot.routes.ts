@@ -99,7 +99,10 @@ function asPayload(v: z.infer<typeof responsePayloadSchema> | null | undefined):
 export async function registerBotRoutes(app: FastifyInstance): Promise<void> {
   // ---- bots CRUD-ish lifecycle ----
 
-  app.post('/bots', { preHandler: app.requireAuth }, async (req) => {
+  app.post('/bots', {
+    preHandler: app.requireAuth,
+    config: { rateLimit: { max: 10, timeWindow: '1 hour', keyGenerator: (req) => req.user?.id ?? req.ip } },
+  }, async (req) => {
     const user = req.user;
     if (!user) throw new AppError(ERR.AUTH_REQUIRED());
     const input = parse(connectSchema, req.body);
