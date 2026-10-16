@@ -115,7 +115,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.get('/auth/captcha', async (req, reply) => {
     // Keep CAPTCHA availability independent from Redis; this bounded local
     // throttle prevents rapid challenge-generation loops in each app process.
-    if (!consumeCaptchaIssuanceSlot(req.ip)) throw new AppError(ERR.RATE_LIMITED());
+    if (!(await consumeCaptchaIssuanceSlot(req.ip))) throw new AppError(ERR.RATE_LIMITED());
     const { captchaId, svg } = issueCaptcha(req.ip);
     reply.header('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
     reply.header('content-type', 'application/json; charset=utf-8');
@@ -138,7 +138,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     // Anti-bot gate BEFORE any DB work (item 15). One shot per code.
     if (security.captchaEnabled) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
-      const captchaOk = verifyCaptcha(input.captchaId, input.captchaText, req.ip);
+      const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText, req.ip);
       if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     }
     const { userId } = await registerUser(input, { ip: req.ip, userAgent: req.headers['user-agent'] });
@@ -205,7 +205,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const security = await getSecuritySettings();
     if (security.captchaEnabled) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
-      if (!verifyCaptcha(input.captchaId, input.captchaText, req.ip)) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+      if (!(await verifyCaptcha(input.captchaId, input.captchaText, req.ip))) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     }
     const created = await requestPasswordReset(input.email);
     // Generic response — no account enumeration (§180)
