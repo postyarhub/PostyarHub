@@ -48,7 +48,7 @@ function resolveAiBaseUrl(candidate: string | undefined, defaultBase: string, ex
   if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new AppError(ERR.VALIDATION('نشانی سفارشی هوش مصنوعی باید HTTPS معتبر و بدون اطلاعات ورود یا query باشد.'));
   }
-  const normalize = (u: URL) => `${u.origin}${u.pathname.replace(/\\/+$/, '')}`;
+  const normalize = (u: URL) => `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
   if (normalize(parsed) !== normalize(canonicalDefault) && !explicitKey?.trim()) {
     throw new AppError(ERR.VALIDATION('برای نشانی سفارشی هوش مصنوعی باید کلید اختصاصی همان سرویس تنظیم شود.'));
   }
