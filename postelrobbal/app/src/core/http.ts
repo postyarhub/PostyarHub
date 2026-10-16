@@ -110,6 +110,13 @@ async function resolveSafeUrl(rawUrl: string): Promise<{ url: URL; address?: str
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw new AppError(ERR.VALIDATION('فقط آدرس‌های http و https مجاز هستند.'));
   }
+  if (url.username || url.password) {
+    throw new AppError(ERR.VALIDATION('نشانی‌های دارای نام کاربری یا رمز عبور مجاز نیستند.'));
+  }
+  const expectedPort = url.protocol === 'https:' ? '443' : '80';
+  if (url.port && url.port !== expectedPort) {
+    throw new AppError(ERR.VALIDATION('اتصال خروجی فقط به پورت استاندارد HTTP یا HTTPS مجاز است.'));
+  }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal') || host.endsWith('.local')) {
     throw new AppError(ERR.VALIDATION('این آدرس مجاز نیست.'));
