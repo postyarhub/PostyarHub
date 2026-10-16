@@ -1,4 +1,5 @@
 import { appendFile, chmod, mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import { httpRaw } from '../../core/http.js';
 import { AppError, ERR } from '../../core/errors.js';
 import type { CreatePaymentInput, CreatedPayment, PaymentGatewayAdapter, VerifiedPayment } from './zarinpal.js';
@@ -11,7 +12,7 @@ import type { CreatePaymentInput, CreatedPayment, PaymentGatewayAdapter, Verifie
  */
 const BASE = 'https://winapay.io/webservice/rest';
 const START = 'https://winapay.io/startPay';
-const DIAGNOSTIC_DIRECTORY = '/home/postyarh/postelrobbal/logs';
+const DIAGNOSTIC_DIRECTORY = path.resolve(__dirname, '../../../../logs');
 const DIAGNOSTIC_FILE = `${DIAGNOSTIC_DIRECTORY}/winapay-provider-diagnostics.jsonl`;
 
 interface WinaResponse {
@@ -186,9 +187,22 @@ export class WinaPayAdapter implements PaymentGatewayAdapter {
       });
       throw new AppError(ERR.PAYMENT_CREATE_FAILED(Number.isFinite(status) ? status : undefined));
     }
-    const paymentUrl = typeof data?.PaymentUrl === 'string' && data.PaymentUrl.trim() !== ''
-      ? data.PaymentUrl.trim()
-      : `${START}/${authority}`;
+    // Never redirect a customer to an arbitrary URL returned in a provider
+    // response. Only accept HTTPS URLs on WinaPay's exact trusted hostname;
+    // otherwise construct the documented redirect locally from the authority.
+    const fallbackUrl = `${START}/${authority}`;
+    let paymentUrl = fallbackUrl;
+    if (typeof data?.PaymentUrl === 'string' && data.PaymentUrl.trim() !== '') {
+      try {
+        const candidate = new URL(data.PaymentUrl.trim());
+        if (candidate.protocol === 'https:' && candidate.hostname.toLowerCase() === 'winapay.io' &&
+            !candidate.username && !candidate.password) {
+          paymentUrl = candidate.toString();
+        }
+      } catch {
+        // Keep the trusted local fallback when the provider URL is malformed.
+      }
+    }
     return { authority, redirectUrl: paymentUrl };
   }
 
