@@ -87,11 +87,9 @@ export async function getAdminBellSnapshot(adminId: string, includeManagementDet
   const seenDate = lastSeenAt ? new Date(lastSeenAt) : new Date(0);
   const since7d = new Date(Date.now() - 7 * 86400_000);
 
-  // Exactly 9 queries: 1 seen-marker read + per category one grouped
-  // count/unread query (SUM(created_at > seen); the epoch sentinel when no
-  // marker exists yet makes every present row count as unread) and one
-  // "latest 5" query with only the needed columns. Four categories are
-  // included: pending payments, pending surveys, open tickets, and new users.
+  // One seen-marker read, plus count/latest queries for the categories the
+  // caller is authorized to view. SUPPORT requests only ticket data; payment,
+  // user and survey queries are skipped rather than queried and then redacted.
   const payAggRows = includeManagementDetails ? await db
     .select({
       total: count(),
