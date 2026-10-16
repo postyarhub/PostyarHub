@@ -149,7 +149,7 @@ export interface HttpOptions {
   headers?: Record<string, string>;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: string | Buffer;
-  /** Defaults to guarded resolution and IP pinning; false is only for fixed, code-controlled provider endpoints. */
+  /** When true, uses SSRF validation and pins the destination IP. Set only for URL-controlled call sites. */
   ssrfGuard?: boolean;
 }
 
@@ -393,7 +393,7 @@ async function nativeHttpRaw(url: string, options: HttpOptions, resolvedAddress?
 export async function httpRaw(url: string, options: HttpOptions = {}): Promise<HttpResult> {
   let currentUrl = url;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-    const guarded = options.ssrfGuard === false ? undefined : await resolveSafeUrl(currentUrl);
+    const guarded = options.ssrfGuard ? await resolveSafeUrl(currentUrl) : undefined;
     const guardUrl = guarded?.url;
     try {
       // Fixed provider endpoints use native Node HTTPS first. On CloudLinux/shared
