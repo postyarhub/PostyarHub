@@ -51,7 +51,7 @@ const LOGIN_IDENTIFIER_FAILURE_COUNTER_SCRIPT = [
   "local count = redis.call('INCR', KEYS[1])",
   'if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end',
   'return count',
-].join('\\n');
+].join('\n');
 
 function loginFailureKey(identifier: string): string {
   const digest = createHash('sha256').update(normalizeLoginIdentifier(identifier)).digest('hex');
