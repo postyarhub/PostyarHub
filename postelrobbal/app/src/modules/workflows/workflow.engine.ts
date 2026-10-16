@@ -5,6 +5,7 @@ import { workflows, workflowRuns } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
 import { emitEvent } from '../../core/events.js';
 import { AppError, ERR } from '../../core/errors.js';
+import { normalizeButtonTargetValue } from '../../core/button-target.js';
 import { aiProviderComplete } from '../ai/ai.service.js';
 import type { Platform } from '../../providers/types.js';
 
@@ -89,24 +90,33 @@ function coerceButtons(value: unknown): Array<{ label: string; url?: string; cal
     if (!raw || typeof raw !== 'object') continue;
     const b = raw as Record<string, unknown>;
     if (typeof b['label'] !== 'string' || !b['label']) continue;
+    let safeUrl: string | undefined;
+    if (typeof b['url'] === 'string') {
+      try { safeUrl = normalizeButtonTargetValue('URL', b['url'].slice(0, 255)); } catch { /* drop legacy unsafe URL */ }
+    }
+    const callback = typeof b['callback'] === 'string' ? b['callback'].slice(0, 64) : undefined;
+    if (!safeUrl && !callback) continue;
     out.push({
       label: b['label'].slice(0, 64),
-      ...(typeof b['url'] === 'string' ? { url: b['url'].slice(0, 255) } : {}),
-      ...(typeof b['callback'] === 'string' ? { callback: b['callback'].slice(0, 64) } : {}),
+      ...(safeUrl ? { url: safeUrl } : {}),
+      ...(callback ? { callback } : {}),
     });
   }
   return out;
 }
 
 export function prepareWorkflowButtons(buttons: Array<{ label: string; url?: string; callback?: string }>): Array<{ label: string; url?: string; callback?: string }> {
-  return buttons
-    .filter((b) => typeof b.url === 'string' || typeof b.callback === 'string')
-    .slice(0, 8)
-    .map((b) => ({
-      label: b.label.slice(0, 64),
-      ...(b.url ? { url: b.url.slice(0, 255) } : {}),
-      ...(b.callback ? { callback: b.callback.slice(0, 64) } : {}),
-    }));
+  const safe: Array<{ label: string; url?: string; callback?: string }> = [];
+  for (const b of buttons.slice(0, 8)) {
+    let url: string | undefined;
+    if (typeof b.url === 'string') {
+      try { url = normalizeButtonTargetValue('URL', b.url.slice(0, 255)); } catch { /* reject legacy unsafe URL */ }
+    }
+    const callback = typeof b.callback === 'string' ? b.callback.slice(0, 64) : undefined;
+    if (!url && !callback) continue;
+    safe.push({ label: b.label.slice(0, 64), ...(url ? { url } : {}), ...(callback ? { callback } : {}) });
+  }
+  return safe;
 }
 
 /** Defensive step coercion — malformed steps are dropped, never crash the run. */
