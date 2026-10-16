@@ -68,7 +68,7 @@ export class ZibalAdapter implements PaymentGatewayAdapter {
   }
 
   async verifyPayment(amountRial: number, authority: string): Promise<VerifiedPayment> {
-    void amountRial; // zibal verify echoes the amount; the trackId is authoritative
+    if (!Number.isSafeInteger(amountRial) || amountRial <= 0) return { ok: false, code: -99 };
     const merchant = this.merchant();
     if (!merchant) {
       throw new AppError(ERR.GATEWAY_NOT_CONFIGURED());
@@ -84,6 +84,12 @@ export class ZibalAdapter implements PaymentGatewayAdapter {
     const code = data?.result ?? -99;
     // 100 = verified; 201 = already verified (idempotent re-verify)
     if (code === 100 || code === 201) {
+      // A valid transaction id alone is not sufficient: fail closed if the
+      // provider does not return the amount or if its unit/value differs.
+      const verifiedAmount = Number(data?.amount);
+      if (!Number.isSafeInteger(verifiedAmount) || verifiedAmount !== amountRial) {
+        return { ok: false, code: -98 };
+      }
       return { ok: true, refId: String(data?.refNumber ?? ''), code };
     }
     return { ok: false, code };
