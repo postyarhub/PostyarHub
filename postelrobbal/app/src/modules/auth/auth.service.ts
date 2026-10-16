@@ -58,7 +58,11 @@ export async function findReferrerByCode(code: string): Promise<string | null> {
  * guard; a unique single-row role_bootstrap table serializes concurrent
  * first-registrations at the DB level. Client-supplied roles are ignored.
  */
-export async function registerUser(input: RegisterInput, meta: { ip?: string; userAgent?: string }) {
+export async function registerUser(
+  input: RegisterInput,
+  meta: { ip?: string; userAgent?: string },
+  bootstrapAuthorized = false,
+) {
   if (!input.acceptTerms) throw new AppError(ERR.VALIDATION('پذیرش قوانین الزامی است.'));
   if (!passwordPolicyOk(input.password)) throw new AppError(ERR.WEAK_PASSWORD());
   if (input.password !== input.passwordRepeat) throw new AppError(ERR.VALIDATION('تکرار رمز عبور مطابقت ندارد.'));
@@ -82,21 +86,35 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
 
   try {
     await db.transaction(async (tx) => {
-      // Atomic first-user claim. role_bootstrap is a singleton row created by migrations;
-      // the duplicate-key update waits on the row lock, so concurrent registrations all
-      // observe exactly one immutable bootstrap owner.
-      await tx.execute(sql`
-        INSERT INTO role_bootstrap (id, user_id) VALUES (1, ${userId})
-        ON DUPLICATE KEY UPDATE id = id
-      `);
-      // Read the singleton back under row lock. This is deliberately independent
-      // of affectedRows semantics (which vary with mysql2 CLIENT_FOUND_ROWS).
-      const claimRaw = await tx.execute(sql`
-        SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
-      `);
-      const claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
-      const claimed = claimRows[0]?.user_id === userId;
-      const role = claimed ? 'SUPER_ADMIN' : 'USER';
+      let role: 'SUPER_ADMIN' | 'USER' = 'USER';
+      if (bootstrapAuthorized) {
+        // The bootstrap route is protected by a separate high-entropy server
+        // secret. The singleton insert is immutable: a second caller cannot
+        // replace the owner or gain SUPER_ADMIN after setup is complete.
+        await tx.execute(sql`
+          INSERT INTO role_bootstrap (id, user_id) VALUES (1, ${userId})
+          ON DUPLICATE KEY UPDATE id = id
+        `);
+        const claimRaw = await tx.execute(sql`
+          SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
+        `);
+        const claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
+        if (claimRows[0]?.user_id !== userId) {
+          throw new AppError(ERR.CONFLICT('راه‌اندازی مدیر اولیه قبلاً انجام شده است.'));
+        }
+        role = 'SUPER_ADMIN';
+      } else {
+        // Never let anonymous public registration claim administrator status.
+        // On an uninitialized database ordinary registration stays closed until
+        // the operator completes the explicit bootstrap flow.
+        const claimRaw = await tx.execute(sql`
+          SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
+        `);
+        const claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
+        if (!claimRows[0]?.user_id) {
+          throw new AppError(ERR.CONFLICT('راه‌اندازی امن مدیر اولیه هنوز انجام نشده است.'));
+        }
+      }
 
       await tx.insert(users).values({
         id: userId,
@@ -108,7 +126,7 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
         businessType: input.businessType.trim(),
         passwordHash,
         referralCode: referralCodeFor(userId),
-        role: role as 'SUPER_ADMIN' | 'USER',
+        role,
       });
 
       const [freePlan] = await tx.select({ id: plans.id, periodDays: plans.periodDays }).from(plans).where(eq(plans.code, 'free')).limit(1);
@@ -138,8 +156,8 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
     });
   } catch (err) {
     const msg = String((err as Error).message ?? '');
-    if (msg.includes('uq_users_email')) throw new AppError(ERR.DUPLICATE('این ایمیل'));
-    if (msg.includes('uq_users_mobile')) throw new AppError(ERR.DUPLICATE('این شمارهٔ موبایل'));
+    if (msg.includes('uq_users_email')) throw new AppError(ERR.VALIDATION('ثبت‌نام با این اطلاعات ممکن نیست.'));
+    if (msg.includes('uq_users_mobile')) throw new AppError(ERR.VALIDATION('ثبت‌نام با این اطلاعات ممکن نیست.'));
     if (msg.includes('role_bootstrap')) throw new AppError(ERR.CONFLICT('ثبت‌نام همزمان انجام شد؛ لطفاً دوباره تلاش کنید.'));
     throw err;
   }
@@ -152,7 +170,8 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
 
 export async function authenticate(emailOrMobile: string, password: string) {
   const db = getDb();
-  const ident = emailOrMobile.trim().toLowerCase();
+  const rawIdent = emailOrMobile.trim().toLowerCase();
+  const ident = rawIdent.includes('@') ? rawIdent : normalizeMobile(rawIdent);
   const [user] = await db
     .select()
     .from(users)
