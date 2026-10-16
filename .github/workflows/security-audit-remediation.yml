@@ -75,6 +75,70 @@ jobs:
             echo 'PHP CLI unavailable on runner; syntax check skipped.'
           fi
 
+  dependency-candidate:
+    name: Test security dependency upgrades in an isolated workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare backend dependency candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd postelrobbal/app
+          npm ci
+          npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5
+          npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5
+          npm audit fix --no-fund --no-progress || true
+          mkdir -p "$RUNNER_TEMP/dependency-candidate/app"
+          cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/app/"
+          npm audit --json > "$RUNNER_TEMP/dependency-candidate/app/audit.json" || true
+          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log('CANDIDATE_APP_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('CANDIDATE_APP_AUDIT_ITEM', JSON.stringify({ name, severity: item.severity, direct: item.isDirect, range: item.range, fixAvailable: item.fixAvailable, advisories: [...new Set(titles)].join('; ').slice(0, 600) }));
+          }
+          NODE
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Prepare frontend dependency candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd postelrobbal/frontend
+          npm ci
+          npm install --no-fund --no-progress --save-prod react-router-dom@7.18.4
+          npm audit fix --no-fund --no-progress || true
+          mkdir -p "$RUNNER_TEMP/dependency-candidate/frontend"
+          cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/frontend/"
+          npm audit --json > "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" || true
+          node - "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log('CANDIDATE_FRONTEND_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('CANDIDATE_FRONTEND_AUDIT_ITEM', JSON.stringify({ name, severity: item.severity, direct: item.isDirect, range: item.range, fixAvailable: item.fixAvailable, advisories: [...new Set(titles)].join('; ').slice(0, 600) }));
+          }
+          NODE
+          npm run build
+      - name: Upload isolated dependency candidate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postyar-security-dependency-candidate
+          path: ${{ runner.temp }}/dependency-candidate/
+          if-no-files-found: warn
+          retention-days: 3
+
   frontend:
     name: Frontend typecheck and production build
     runs-on: ubuntu-latest
