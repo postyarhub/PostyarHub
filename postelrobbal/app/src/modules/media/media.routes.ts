@@ -36,7 +36,10 @@ function mustUlidParam(req: { params?: unknown }, name: string): string {
 
 export async function registerMediaRoutes(app: FastifyInstance): Promise<void> {
   // Multipart upload via @fastify/multipart (registered in buildApp, 10MB stream cap).
-  app.post('/media', { preHandler: app.requireAuth }, async (req) => {
+  app.post('/media', {
+    preHandler: app.requireAuth,
+    config: { rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: (req) => req.user?.id ?? req.ip } },
+  }, async (req) => {
     const tenantId = mustTenantId(req);
     const file = await req.file();
     if (!file) throw new AppError(ERR.VALIDATION('فایلی ارسال نشده است.'));
