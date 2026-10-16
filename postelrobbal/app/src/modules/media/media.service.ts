@@ -167,7 +167,7 @@ export async function processImageToWebp(buf: Buffer, variant: 'media' | 'avatar
       throw new Error('IMAGE_RESOURCE_LIMIT');
     }
     if (variant === 'avatar') {
-      const { data, info } = await sharp(buf)
+      const { data, info } = await sharp(buf, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
         .rotate() // EXIF auto-orient
         .resize({ width: 512, height: 512, fit: 'cover', position: 'centre' })
         .webp({ quality: 85, effort: 4 })
@@ -178,14 +178,14 @@ export async function processImageToWebp(buf: Buffer, variant: 'media' | 'avatar
       // Animated input (animated GIF / animated WebP): the multi-page Sharp
       // instance makes the WebP output animated automatically (sharp ≥0.33 —
       // .webp() no longer takes an `animated` key); q78/effort 3 per round-17 spec.
-      const { data, info } = await sharp(buf, { animated: true })
+      const { data, info } = await sharp(buf, { animated: true, limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
         .rotate()
         .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 78, effort: 3 })
         .toBuffer({ resolveWithObject: true });
       return { buffer: data, width: info.width, height: info.height, animated: true };
     }
-    const { data, info } = await sharp(buf)
+    const { data, info } = await sharp(buf, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
       .rotate()
       .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82, effort: 4 })
