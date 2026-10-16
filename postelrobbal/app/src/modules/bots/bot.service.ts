@@ -191,6 +191,7 @@ export async function connectBot(
     const now = new Date();
     const mode = input.platform === 'rubika' ? 'WEBHOOK' : 'POLLING';
     const webhookSecret = provider.capabilities().webhook ? newToken(24) : null;
+    const storedWebhookSecret = webhookSecret ? await sha256Hex(webhookSecret) : null;
     if (mode === 'POLLING' && provider.capabilities().webhook && typeof provider.deleteWebhook === 'function') {
       await provider.deleteWebhook(token).catch((err: unknown) => { throw mapProviderError(err); });
     }
@@ -202,7 +203,7 @@ export async function connectBot(
       await tx.insert(bots).values({
         id, tenantId, platform: input.platform, tokenEncrypted: encryptSecret(token), tokenMasked: maskSecret(token),
         username: identity.username, title: (input.title?.trim() || identity.title || 'ربات').slice(0, 190), status: 'ACTIVE', mode,
-        webhookSecret, healthJson: { verify: 'ok', providerBotId: identity.id, verifiedAt: now.toISOString(), connectionMode: mode },
+        webhookSecret: storedWebhookSecret, healthJson: { verify: 'ok', providerBotId: identity.id, verifiedAt: now.toISOString(), connectionMode: mode },
       });
     });
   const created = await getOwnedBot(tenantId, id);
@@ -210,12 +211,14 @@ export async function connectBot(
     const url = buildBotWebhookUrl(id, webhookSecret, input.platform);
     try {
       await provider.setWebhook(token, url, webhookSecret);
-      await db.update(bots).set({ webhookUrl: url.slice(0, 255), webhookRegisteredAt: now }).where(eq(bots.id, id));
+      // The provider needs the one-time raw secret to configure ingress, but
+      // the database stores neither that secret nor the query-bearing URL.
+      await db.update(bots).set({ webhookUrl: url.split('?')[0]!.slice(0, 255), webhookRegisteredAt: now }).where(eq(bots.id, id));
     } catch (err) {
       const mapped = mapProviderError(err);
       await db.update(bots).set({
         status: 'ERROR',
-        healthJson: { verify: 'ok', webhook: 'failed', webhookUrl: url, errorClass: mapped instanceof Error && 'providerClass' in mapped ? String((mapped as { providerClass?: unknown }).providerClass ?? '') : 'UNKNOWN', errorMessageFa: mapped instanceof Error ? mapped.message : 'خطای اتصال وبهوک روبیکا', failedAt: new Date().toISOString() },
+        healthJson: { verify: 'ok', webhook: 'failed', webhookUrl: url.split('?')[0], errorClass: mapped instanceof Error && 'providerClass' in mapped ? String((mapped as { providerClass?: unknown }).providerClass ?? '') : 'UNKNOWN', errorMessageFa: mapped instanceof Error ? mapped.message : 'خطای اتصال وبهوک روبیکا', failedAt: new Date().toISOString() },
       }).where(eq(bots.id, id)).catch(() => undefined);
       throw mapped;
     }
@@ -273,17 +276,20 @@ export async function enableBot(tenantId: string, botId: string): Promise<BotPub
 
     const provider = getProvider(bot.platform);
     const token = decryptSecret(bot.tokenEncrypted);
-    let webhookSecret = bot.webhookSecret;
+    let storedWebhookSecret = bot.webhookSecret;
     let webhookUrl = bot.webhookUrl;
     let webhookRegisteredAt = bot.webhookRegisteredAt;
 
     if (bot.mode === 'WEBHOOK' && provider.capabilities().webhook && typeof provider.setWebhook === 'function') {
-      if (!webhookSecret) webhookSecret = newToken(24);
-      const url = buildBotWebhookUrl(bot.id, webhookSecret, bot.platform);
-      await provider.setWebhook(token, url, webhookSecret).catch((err: unknown) => {
+      // Stored values are hashes. Rotate on enable so the clear secret exists
+      // only in this call and in the provider's webhook configuration.
+      const providerSecret = newToken(24);
+      storedWebhookSecret = await sha256Hex(providerSecret);
+      const url = buildBotWebhookUrl(bot.id, providerSecret, bot.platform);
+      await provider.setWebhook(token, url, providerSecret).catch((err: unknown) => {
         throw mapProviderError(err);
       });
-      webhookUrl = url.slice(0, 255);
+      webhookUrl = url.split('?')[0]!.slice(0, 255);
       webhookRegisteredAt = new Date();
     } else if (bot.mode === 'POLLING') {
       if (provider.capabilities().webhook && typeof provider.deleteWebhook === 'function') {
@@ -297,7 +303,7 @@ export async function enableBot(tenantId: string, botId: string): Promise<BotPub
       .update(bots)
       .set({
         status: 'ACTIVE',
-        webhookSecret,
+        webhookSecret: storedWebhookSecret,
         webhookUrl,
         webhookRegisteredAt,
         healthJson: { ...((bot.healthJson ?? {}) as Record<string, unknown>), lastEnable: new Date().toISOString() },
@@ -379,7 +385,7 @@ export async function setBotMode(tenantId: string, botId: string, mode: 'WEBHOOK
     }
 
     const provider = getProvider(bot.platform);
-    let webhookSecret = bot.webhookSecret;
+    let storedWebhookSecret = bot.webhookSecret;
     let webhookUrl: string | null = bot.webhookUrl;
     let webhookRegisteredAt: Date | null = bot.webhookRegisteredAt;
 
@@ -387,13 +393,16 @@ export async function setBotMode(tenantId: string, botId: string, mode: 'WEBHOOK
       if (!provider.capabilities().webhook || typeof provider.setWebhook !== 'function') {
         throw new AppError(ERR.VALIDATION('این پلتفرم از حالت وبهوک پشتیبانی نمی‌کند.'));
       }
-      if (!webhookSecret) webhookSecret = newToken(24);
+      // A hash cannot be sent back to the provider as its webhook secret.
+      // Always rotate when switching into webhook mode, then persist the hash.
+      const providerSecret = newToken(24);
+      storedWebhookSecret = await sha256Hex(providerSecret);
       if (bot.status === 'ACTIVE') {
-        const url = buildBotWebhookUrl(bot.id, webhookSecret, bot.platform);
-        await provider.setWebhook(decryptSecret(bot.tokenEncrypted), url, webhookSecret).catch((err: unknown) => {
+        const url = buildBotWebhookUrl(bot.id, providerSecret, bot.platform);
+        await provider.setWebhook(decryptSecret(bot.tokenEncrypted), url, providerSecret).catch((err: unknown) => {
           throw mapProviderError(err);
         });
-        webhookUrl = url.slice(0, 255);
+        webhookUrl = url.split('?')[0]!.slice(0, 255);
         webhookRegisteredAt = new Date();
       } else {
         webhookUrl = null;
@@ -409,7 +418,7 @@ export async function setBotMode(tenantId: string, botId: string, mode: 'WEBHOOK
 
     await tx
       .update(bots)
-      .set({ mode, webhookSecret, webhookUrl, webhookRegisteredAt })
+      .set({ mode, webhookSecret: storedWebhookSecret, webhookUrl, webhookRegisteredAt })
       .where(and(eq(bots.id, bot.id), eq(bots.mode, bot.mode)));
     changed = true;
   });
@@ -959,7 +968,22 @@ export async function ingestBotWebhook(botId: string, secretParam: unknown, body
   const querySecret = typeof secretParam === 'string' ? secretParam : '';
   const headerSecret = typeof secretHeader === 'string' ? secretHeader : '';
   const secret = bot.platform === 'telegram' ? headerSecret : querySecret || headerSecret;
-  if (!secret || !timingSafeEqualStr(secret, bot.webhookSecret)) return;
+  if (!secret) return;
+
+  // Backward-compatible hash-only verification. Existing rows may still have
+  // a legacy plaintext secret until their first valid webhook arrives; after
+  // successful proof, upgrade it in place using a compare-and-swap update.
+  const storedSecret = bot.webhookSecret;
+  const storedAsHash = /^[0-9a-f]{64}$/i.test(storedSecret);
+  const expectedHash = storedAsHash ? storedSecret.toLowerCase() : await sha256Hex(storedSecret);
+  const suppliedHash = await sha256Hex(secret);
+  if (!timingSafeEqualStr(suppliedHash, expectedHash)) return;
+  if (!storedAsHash) {
+    await db.update(bots)
+      .set({ webhookSecret: expectedHash })
+      .where(and(eq(bots.id, bot.id), eq(bots.webhookSecret, storedSecret)))
+      .catch(() => undefined);
+  }
   if (bot.platform === 'rubika') {
     const token = decryptSecret(bot.tokenEncrypted);
     if (await handleRubikaChannelDiscovery(bot, body, token)) return;
