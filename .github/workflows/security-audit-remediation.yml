@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         working-directory: postelrobbal/app
         run: npm ci
-      - name: Dependency vulnerability inventory (report only)
+      - name: Dependency vulnerability gate
         working-directory: postelrobbal/app
         shell: bash
         run: |
@@ -37,7 +37,9 @@ jobs:
           node - "$RUNNER_TEMP/postyar-app-npm-audit.json" <<'NODE'
           const fs = require('node:fs');
           const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          console.log('APP_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          const totals = report.metadata?.vulnerabilities ?? {};
+          console.log('APP_AUDIT_TOTALS', JSON.stringify(totals));
+          if (Number(totals.total ?? 0) !== 0) process.exitCode = 1;
           for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
             const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
             console.log('APP_AUDIT_ITEM', JSON.stringify({
@@ -197,7 +199,7 @@ jobs:
       - name: Install dependencies
         working-directory: postelrobbal/frontend
         run: npm ci
-      - name: Dependency vulnerability inventory (report only)
+      - name: Dependency vulnerability gate
         working-directory: postelrobbal/frontend
         shell: bash
         run: |
@@ -205,7 +207,9 @@ jobs:
           node - "$RUNNER_TEMP/postyar-frontend-npm-audit.json" <<'NODE'
           const fs = require('node:fs');
           const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          console.log('FRONTEND_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          const totals = report.metadata?.vulnerabilities ?? {};
+          console.log('FRONTEND_AUDIT_TOTALS', JSON.stringify(totals));
+          if (Number(totals.total ?? 0) !== 0) process.exitCode = 1;
           for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
             const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
             console.log('FRONTEND_AUDIT_ITEM', JSON.stringify({
