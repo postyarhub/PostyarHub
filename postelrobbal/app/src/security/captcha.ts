@@ -4,8 +4,8 @@ import { getRedis } from '../queue/connection.js';
 /**
  * Internal graphical anti-bot captcha.
  *
- * V20 deliberately removes Redis and third-party CAPTCHA rendering from this
- * critical authentication path. The challenge answer is derived from an
+ * CAPTCHA state is shared through Redis so replay and issuance limits apply
+ * across all API processes. The challenge answer is derived from an
  * opaque server-generated ID + server secret + request binding. The rendered
  * glyphs are vector blocks (not SVG <text>), so the answer is not present as
  * selectable text in the DOM.
@@ -18,7 +18,6 @@ import { getRedis } from '../queue/connection.js';
 const CAPTCHA_TTL_SECONDS = 300;
 const CAPTCHA_LENGTH = 5;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const MAX_CONSUMED_ENTRIES = 4096;
 const BLOCK = 3;
 
 // The source of truth for rate limits and one-use challenges is shared Redis,
@@ -35,7 +34,7 @@ export async function consumeCaptchaIssuanceSlot(binding = ''): Promise<boolean>
     'local count = redis.call("INCR", KEYS[1])',
     'if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end',
     'return count',
-  ].join('\\n');
+  ].join('\n');
   try {
     const count = Number(await getRedis().eval(
       script,
