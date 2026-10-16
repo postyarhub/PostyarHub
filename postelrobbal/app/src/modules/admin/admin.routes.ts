@@ -420,7 +420,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // ---- admin bell (round 18, asovin «اعلان‌های سیستمی مدیر» parity) ----
   app.get('/admin/notifications/bell', access, async (req) => {
     const me = auth(req);
-    const data = await getAdminBellSnapshot(me.id);
+    const data = await getAdminBellSnapshot(me.id, me.role === 'SUPER_ADMIN');
     if (me.role === 'SUPPORT') {
       // Support staff should see ticket activity only. Never include payment
       // amounts, payer email or new-user details in the support bell response.
