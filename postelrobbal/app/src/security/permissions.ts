@@ -4,6 +4,11 @@
  */
 export type Permission =
   | 'admin.access'
+  | 'admin.users.read'
+  | 'admin.payments.read'
+  | 'admin.audit.read'
+  | 'admin.platform.read'
+  | 'admin.plans.read'
   | 'admin.users.manage'
   | 'admin.plans.manage'
   | 'admin.settings.manage'
@@ -13,7 +18,8 @@ export type Permission =
 
 const ROLE_PERMISSIONS: Record<'SUPER_ADMIN' | 'SUPPORT' | 'USER', Permission[]> = {
   SUPER_ADMIN: [
-    'admin.access', 'admin.users.manage', 'admin.plans.manage',
+    'admin.access', 'admin.users.read', 'admin.payments.read', 'admin.audit.read',
+    'admin.platform.read', 'admin.plans.read', 'admin.users.manage', 'admin.plans.manage',
     'admin.settings.manage', 'admin.payments.review', 'admin.broadcast', 'support.tickets.any',
   ],
   SUPPORT: ['admin.access', 'support.tickets.any'],
