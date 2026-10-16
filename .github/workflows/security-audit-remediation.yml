@@ -104,9 +104,9 @@ jobs:
           const fs = require('node:fs');
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           p.overrides = { ...(p.overrides ?? {}), '@esbuild-kit/core-utils': { ...((p.overrides ?? {})['@esbuild-kit/core-utils'] ?? {}), esbuild: '^0.28.2' } };
-          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\\n');
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
-          npm install --package-lock-only --no-fund --no-progress
+          npm install --no-fund --no-progress
           mkdir -p "$RUNNER_TEMP/dependency-candidate/app"
           cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/app/"
           npm audit --json > "$RUNNER_TEMP/dependency-candidate/app/audit.json" || true
