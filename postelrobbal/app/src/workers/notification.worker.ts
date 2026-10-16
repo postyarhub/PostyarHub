@@ -121,9 +121,18 @@ async function handlePasswordReset(job: Job): Promise<void> {
     await notifyTenant({
       tenantId,
       kind: 'PASSWORD_RESET',
+      subjectId: resetTokenId,
       titleFa: 'بازیابی رمز عبور',
       bodyFa: 'ارسال راهنمای بازیابی رمز عبور ناموفق بود. لطفاً پس از چند دقیقه دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.',
     }).catch(() => undefined);
+    if (resetTokenId && result.reason !== 'NOT_CONFIGURED') {
+      // Retain the short-lived token during BullMQ's bounded retries. Throwing
+      // activates its configured retry/backoff policy; the opaque job payload
+      // still contains no reset secret. Redis TTL is the final cleanup bound.
+      throw new Error('PASSWORD_RESET_EMAIL_DELIVERY_FAILED');
+    }
+    if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
+    return;
   }
   if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
 }
