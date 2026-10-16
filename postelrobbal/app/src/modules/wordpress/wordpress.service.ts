@@ -200,7 +200,11 @@ async function fetchFeaturedImageAsset(
   const url = normalizeFeaturedImageUrl(imageUrl, site.siteUrl);
   let response;
   try {
-    response = await httpBuffer(url, { timeoutMs: 25_000, headers: { accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8' } });
+    response = await httpBuffer(url, {
+      timeoutMs: 25_000,
+      ssrfGuard: true,
+      headers: { accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8' },
+    });
   } catch {
     throw new AppError(ERR.VALIDATION('دریافت تصویر شاخص از وب‌سایت ناموفق بود. آدرس تصویر را در وردپرس بررسی کنید.'));
   }
