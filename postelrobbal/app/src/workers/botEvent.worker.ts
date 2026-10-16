@@ -15,6 +15,7 @@ import { extractBotMessage } from '../core/bot-message.js';
 import { aiProviderComplete } from '../modules/ai/ai.service.js';
 import { loadEnv } from '../config/env.js';
 import { assertBotReplyRoute, assertBotEventScope } from '../core/bot-routing.js';
+import { normalizeButtonTargetValue } from '../core/button-target.js';
 import { executeWorkflow } from '../modules/workflows/workflow.engine.js';
 
 /**
@@ -66,10 +67,16 @@ function coerceButtons(value: unknown): InlineButton[] | undefined {
     if (!raw || typeof raw !== 'object') continue;
     const b = raw as Record<string, unknown>;
     if (typeof b['label'] !== 'string' || !b['label']) continue;
+    let safeUrl: string | undefined;
+    if (typeof b['url'] === 'string') {
+      try { safeUrl = normalizeButtonTargetValue('URL', b['url'].slice(0, 255)); } catch { /* discard legacy unsafe URL */ }
+    }
+    const callback = typeof b['callback'] === 'string' ? b['callback'].slice(0, 64) : undefined;
+    if (!safeUrl && !callback) continue;
     buttons.push({
       label: b['label'].slice(0, 64),
-      ...(typeof b['url'] === 'string' ? { url: b['url'].slice(0, 255) } : {}),
-      ...(typeof b['callback'] === 'string' ? { callback: b['callback'].slice(0, 64) } : {}),
+      ...(safeUrl ? { url: safeUrl } : {}),
+      ...(callback ? { callback } : {}),
     });
   }
   return buttons.length ? buttons : undefined;
