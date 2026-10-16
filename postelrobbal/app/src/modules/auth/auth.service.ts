@@ -89,6 +89,13 @@ export async function registerUser(
     await db.transaction(async (tx) => {
       let role: 'SUPER_ADMIN' | 'USER' = 'USER';
       if (bootstrapAuthorized) {
+        // A missing role_bootstrap marker must never let a legacy database with
+        // existing users grant SUPER_ADMIN to a new public registration. Only
+        // an actually empty user table may enter the explicit bootstrap path.
+        const existingUsers = await tx.select({ id: users.id }).from(users).limit(1).for('update');
+        if (existingUsers.length > 0) {
+          throw new AppError(ERR.CONFLICT('حساب کاربری از قبل وجود دارد؛ راه‌اندازی مدیر اولیه فقط برای پایگاه دادهٔ خالی مجاز است.'));
+        }
         // The bootstrap route is protected by a separate high-entropy server
         // secret. The singleton insert is immutable: a second caller cannot
         // replace the owner or gain SUPER_ADMIN after setup is complete.
