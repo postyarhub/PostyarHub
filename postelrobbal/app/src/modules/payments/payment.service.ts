@@ -679,7 +679,10 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
     const flipped = await tx
       .update(payments)
       .set({ state: 'VERIFIED', verifiedAt: new Date(), gatewayRef: verified.refId ?? null })
-      .where(and(eq(payments.id, payment.id), inArray(payments.state, ['CREATED', 'REDIRECTED'])));
+      // FAILED can mean an earlier verification attempt was inconclusive.
+      // Only an affirmative server-to-server result reaches this transition;
+      // atomic state matching still guarantees that financial side effects run once.
+      .where(and(eq(payments.id, payment.id), inArray(payments.state, ['CREATED', 'REDIRECTED', 'FAILED'])));
     const affected = Array.isArray(flipped) ? Number(flipped[0]?.affectedRows ?? 0) : Number((flipped as { affectedRows?: number }).affectedRows ?? 0);
     if (affected !== 1) return;
     applied = true;
