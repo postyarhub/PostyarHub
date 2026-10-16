@@ -91,7 +91,7 @@ export function startBotEventWorker(): Worker {
       'redis.call("ZADD", KEYS[1], ARGV[1], ARGV[4])',
       'redis.call("PEXPIRE", KEYS[1], ARGV[2])',
       'return 1',
-    ].join('\\n');
+    ].join('\n');
     try {
       const allowed = Number(await getRedis().eval(
         script, 1, redisKey, String(now), String(SPAM_WINDOW_MS), String(SPAM_MAX_PER_WINDOW), `${now}:${newId()}`,
