@@ -197,7 +197,7 @@ const PASSWORD_RESET_EMAIL_COUNTER_SCRIPT = [
   "local count = redis.call('INCR', KEYS[1])",
   "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
   'return count',
-].join('\\n');
+].join('\n');
 
 export async function requestPasswordReset(email: string): Promise<boolean> {
   const normalizedEmail = email.trim().toLowerCase();
