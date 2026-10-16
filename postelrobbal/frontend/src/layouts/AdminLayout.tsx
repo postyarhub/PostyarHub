@@ -17,10 +17,16 @@ import '../styles/admin.css';
 /* off-canvas drawer (<1024px), own footer.                            */
 /* ------------------------------------------------------------------ */
 
-function AdminNav() {
+function AdminNav({ supportOnly = false }: { supportOnly?: boolean }) {
+  const sections = supportOnly
+    ? ADMIN_SECTIONS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.to === '/dashboard/admin/tickets'),
+      })).filter((group) => group.items.length > 0)
+    : ADMIN_SECTIONS;
   return (
     <>
-      {ADMIN_SECTIONS.map((g) => (
+      {sections.map((g) => (
         <div className="adm-group" key={g.group}>
           <div className="adm-group__title">{g.group}</div>
           {g.items.map((s) => (
@@ -99,6 +105,12 @@ export default function AdminLayout() {
   if (role !== 'SUPER_ADMIN' && role !== 'SUPPORT') {
     return <Navigate to="/dashboard" replace />;
   }
+  const supportOnly = role === 'SUPPORT';
+  // Support staff may only enter the ticket console, even through a bookmarked
+  // URL. API permissions remain the authoritative enforcement layer.
+  if (supportOnly && location.pathname !== '/dashboard/admin/tickets') {
+    return <Navigate to="/dashboard/admin/tickets" replace />;
+  }
 
   const drawerVisible = drawerOpen || drawerClosing;
 
@@ -157,7 +169,7 @@ export default function AdminLayout() {
       <div className="adm-body">
         <aside className="adm-sidebar">
           <nav className="adm-nav" aria-label="بخش‌های پنل مدیریت">
-            <AdminNav />
+            <AdminNav supportOnly={supportOnly} />
           </nav>
         </aside>
 
@@ -189,7 +201,7 @@ export default function AdminLayout() {
               </button>
             </div>
             <nav className="adm-drawer__nav" aria-label="بخش‌های پنل مدیریت">
-              <AdminNav />
+              <AdminNav supportOnly={supportOnly} />
             </nav>
             <div className="adm-drawer__foot">
               <button
