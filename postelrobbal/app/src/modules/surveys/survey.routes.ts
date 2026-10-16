@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, asc, count, desc, eq, gte, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { surveys, surveyOptions, surveyVotes, surveyEvents } from '../../db/schema.js';
+import { surveys, surveyOptions, surveyVotes, surveyEvents, users } from '../../db/schema.js';
 
 const idSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/i, 'شناسه نظرسنجی معتبر نیست.');
 const createSchema = z.object({
@@ -166,20 +166,22 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return sendError(reply, 400, 'VALIDATION_ERROR', 'سؤال باید حداقل ۸ نویسه و تعداد گزینه‌ها بین ۲ تا ۸ باشد؛ متن گزینه‌ها نیز باید یکتا باشد.');
     const db = getDb();
-    const pendingCount = await db.select({ total: count() }).from(surveys)
-      .where(and(eq(surveys.creatorId, req.user.id), eq(surveys.status, 'PENDING')));
-    // Bound the moderation queue independently of the HTTP/IP rate limit.
-    if (Number(pendingCount[0]?.total ?? 0) >= 5) {
-      return sendError(reply, 429, 'SURVEY_PENDING_LIMIT', 'حداکثر ۵ نظرسنجی در انتظار بررسی مجاز است.');
-    }
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recent = await db.select({ total: count() }).from(surveys)
-      .where(and(eq(surveys.creatorId, req.user.id), gte(surveys.createdAt, cutoff)));
-    if (Number(recent[0]?.total ?? 0) >= 3) {
-      return sendError(reply, 429, 'SURVEY_DAILY_LIMIT', 'حداکثر ۳ نظرسنجی در هر ۲۴ ساعت مجاز است.');
-    }
     const id = newId();
-    await db.transaction(async (tx) => {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const outcome = await db.transaction(async (tx) => {
+      // Serialize quota-sensitive submissions per user. Counting before the
+      // transaction allowed parallel requests to exceed both moderation and
+      // daily limits while every request saw the same old counts.
+      await tx.select({ id: users.id }).from(users).where(eq(users.id, req.user!.id)).limit(1).for('update');
+
+      const pendingCount = await tx.select({ total: count() }).from(surveys)
+        .where(and(eq(surveys.creatorId, req.user!.id), eq(surveys.status, 'PENDING')));
+      if (Number(pendingCount[0]?.total ?? 0) >= 5) return { error: 'pending' as const };
+
+      const recent = await tx.select({ total: count() }).from(surveys)
+        .where(and(eq(surveys.creatorId, req.user!.id), gte(surveys.createdAt, cutoff)));
+      if (Number(recent[0]?.total ?? 0) >= 3) return { error: 'daily' as const };
+
       await tx.insert(surveys).values({
         id,
         creatorId: req.user!.id,
@@ -192,8 +194,15 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
         await tx.insert(surveyOptions).values({ id: newId(), surveyId: id, label, sortOrder: index });
       }
       await appendEvent(tx, id, req.user!.id, 'SUBMITTED');
+      return { id } as const;
     });
-    const created = await db.select().from(surveys).where(eq(surveys.id, id)).limit(1);
+    if ('error' in outcome) {
+      if (outcome.error === 'pending') {
+        return sendError(reply, 429, 'SURVEY_PENDING_LIMIT', 'حداکثر ۵ نظرسنجی در انتظار بررسی مجاز است.');
+      }
+      return sendError(reply, 429, 'SURVEY_DAILY_LIMIT', 'حداکثر ۳ نظرسنجی در هر ۲۴ ساعت مجاز است.');
+    }
+    const created = await db.select().from(surveys).where(eq(surveys.id, outcome.id)).limit(1);
     return { success: true, data: { survey: (await withOptions(created))[0] } };
   });
 
