@@ -37,6 +37,12 @@ function normalizeMobile(m: string): string {
   return latin;
 }
 
+/** Normalize login identifiers identically for auth lookup and abuse controls. */
+export function normalizeLoginIdentifier(emailOrMobile: string): string {
+  const raw = emailOrMobile.trim().toLowerCase();
+  return raw.includes('@') ? raw : normalizeMobile(raw);
+}
+
 /** Deterministic per-user referral code (§36). */
 export function referralCodeFor(userId: string): string {
   const h = createHash('sha256').update(`postyar-ref:${userId}`).digest('base64url');
@@ -201,8 +207,7 @@ export async function registerUser(
 
 export async function authenticate(emailOrMobile: string, password: string) {
   const db = getDb();
-  const rawIdent = emailOrMobile.trim().toLowerCase();
-  const ident = rawIdent.includes('@') ? rawIdent : normalizeMobile(rawIdent);
+  const ident = normalizeLoginIdentifier(emailOrMobile);
   const [user] = await db
     .select()
     .from(users)
