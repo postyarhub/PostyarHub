@@ -43,7 +43,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     const env = loadEnv();
     reply.header('cache-control', 'no-store');
     reply.code(ready ? 200 : 503);
-    return { status: ready ? 'ready' : 'degraded', checks: env.NODE_ENV === 'production' ? checks : checks, env: env.NODE_ENV };
+    if (env.NODE_ENV === 'production') {
+      // Anonymous probes need only readiness status. Dependency names and
+      // individual diagnostics belong in authenticated/host-side telemetry.
+      return { status: ready ? 'ready' : 'degraded' };
+    }
+    return { status: ready ? 'ready' : 'degraded', checks, env: env.NODE_ENV };
   });
 
   app.get('/', async () => ({ status: 'ok', service: 'postyar-api' }));
