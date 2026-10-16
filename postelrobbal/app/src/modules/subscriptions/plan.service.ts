@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gt, lt, ne, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, lte, lt, ne, sql } from 'drizzle-orm';
 import { getDb, type Db } from '../../db/client.js';
 import {
   plans,
@@ -187,6 +187,9 @@ function freeContext(free?: { id: string; code: string; nameFa: string; limitsJs
 /** Latest ACTIVE subscription joined with its plan; free plan when none exists. */
 export async function getPlanContext(tenantId: string): Promise<PlanContext> {
   const db = getDb();
+  // Use one timestamp for both boundaries. Future-dated renewal rows must not
+  // activate early or mask the currently effective subscription.
+  const now = new Date();
   const [row] = await db
     .select({
       subscriptionId: subscriptions.id,
@@ -203,9 +206,10 @@ export async function getPlanContext(tenantId: string): Promise<PlanContext> {
     .where(and(
       eq(subscriptions.tenantId, tenantId),
       eq(subscriptions.state, 'ACTIVE'),
-      gt(subscriptions.expiresAt, new Date()),
+      lte(subscriptions.startedAt, now),
+      gt(subscriptions.expiresAt, now),
     ))
-    .orderBy(desc(subscriptions.createdAt))
+    .orderBy(desc(subscriptions.startedAt), desc(subscriptions.createdAt))
     .limit(1);
 
   if (row) {
