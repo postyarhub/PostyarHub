@@ -418,13 +418,20 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- admin bell (round 18, asovin «اعلان‌های سیستمی مدیر» parity) ----
-  app.get('/admin/notifications/bell', platformRead, async (req) => {
+  app.get('/admin/notifications/bell', access, async (req) => {
     const me = auth(req);
     const data = await getAdminBellSnapshot(me.id);
+    if (me.role === 'SUPPORT') {
+      // Support staff should see ticket activity only. Never include payment
+      // amounts, payer email or new-user details in the support bell response.
+      data.pendingPayments = { count: 0, unread: 0, latest: [] };
+      data.newUsers = { count: 0, unread: 0, latest: [] };
+      data.unreadTotal = data.openTickets.unread;
+    }
     return { success: true, data };
   });
 
-  app.post('/admin/notifications/bell/seen', platformRead, async (req) => {
+  app.post('/admin/notifications/bell/seen', access, async (req) => {
     // No audit: this is a high-frequency UI marker (opening the bell popup),
     // not a state change — an audit row per popup would flood audit_logs.
     const me = auth(req);
