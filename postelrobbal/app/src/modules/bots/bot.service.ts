@@ -276,7 +276,9 @@ export async function enableBot(tenantId: string, botId: string): Promise<BotPub
 
     const provider = getProvider(bot.platform);
     const token = decryptSecret(bot.tokenEncrypted);
-    let storedWebhookSecret = bot.webhookSecret;
+    let storedWebhookSecret = bot.webhookSecret && !/^[0-9a-f]{64}$/i.test(bot.webhookSecret)
+      ? await sha256Hex(bot.webhookSecret)
+      : bot.webhookSecret;
     let webhookUrl = bot.webhookUrl;
     let webhookRegisteredAt = bot.webhookRegisteredAt;
 
@@ -385,7 +387,9 @@ export async function setBotMode(tenantId: string, botId: string, mode: 'WEBHOOK
     }
 
     const provider = getProvider(bot.platform);
-    let storedWebhookSecret = bot.webhookSecret;
+    let storedWebhookSecret = bot.webhookSecret && !/^[0-9a-f]{64}$/i.test(bot.webhookSecret)
+      ? await sha256Hex(bot.webhookSecret)
+      : bot.webhookSecret;
     let webhookUrl: string | null = bot.webhookUrl;
     let webhookRegisteredAt: Date | null = bot.webhookRegisteredAt;
 
