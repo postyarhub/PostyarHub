@@ -94,12 +94,6 @@ function secret(): Buffer {
   return createHash('sha256').update(value).digest();
 }
 
-function pruneConsumed(now = Date.now()): void {
-  for (const [id, expiresAt] of consumed) {
-    if (expiresAt <= now || consumed.size > MAX_CONSUMED_ENTRIES) consumed.delete(id);
-  }
-}
-
 function bindingDigest(binding: string): string {
   return createHash('sha256').update(String(binding || '')).digest('hex');
 }
