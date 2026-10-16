@@ -146,6 +146,6 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
     return reply.redirect(`${env.APP_URL}/dashboard/wallet?payment=${flag}`);
   };
 
-  app.get('/payments/callback', gatewayCallback);
-  app.post('/payments/callback', gatewayCallback);
+  app.get('/payments/callback', { config: { rateLimit: { max: 120, timeWindow: '15 minutes' } } }, gatewayCallback);
+  app.post('/payments/callback', { config: { rateLimit: { max: 120, timeWindow: '15 minutes' } } }, gatewayCallback);
 }
