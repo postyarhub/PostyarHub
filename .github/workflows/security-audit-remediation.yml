@@ -92,7 +92,7 @@ jobs:
           cd postelrobbal/app
           npm ci
           npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5
-          npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5
+          npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5 vite@6.4.3
           npm audit fix --no-fund --no-progress || true
           mkdir -p "$RUNNER_TEMP/dependency-candidate/app"
           cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/app/"
