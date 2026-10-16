@@ -1,4 +1,4 @@
-import { assertSafeUrl, httpBuffer, httpJson, HttpJsonParseError } from '../../core/http.js';
+import { httpBuffer, httpJson, httpMultipartJson, HttpJsonParseError } from '../../core/http.js';
 import {
   ProviderAdapter, ProviderCapabilities, BotIdentity, SendResult,
   SendTextInput, SendMediaInput, makeProviderError, mapHttpToProviderError,
@@ -133,12 +133,19 @@ export class RubikaAdapter implements ProviderAdapter {
     if (input.kind === 'video' && contentType && !contentType.startsWith('video/')) {
       throw makeProviderError('VALIDATION', 'فایل ویدئویی مقصد، محتوای ویدئویی معتبر برنگرداند.');
     }
-    const form = new FormData();
-    form.append('file', new Blob([bytes], { type: contentType || (input.kind === 'photo' ? 'image/jpeg' : 'video/mp4') }), input.mediaFilename ?? (input.kind === 'photo' ? 'postyar.jpg' : 'postyar.mp4'));
-    await assertSafeUrl(reservation.upload_url);
-    const uploadedRes = await fetch(reservation.upload_url, { method: 'POST', body: form, signal: AbortSignal.timeout(25_000) });
-    const uploaded = await uploadedRes.json().catch(() => ({})) as Record<string, unknown>;
-    if (!uploadedRes.ok) throw mapHttpToProviderError(uploadedRes.status, String(uploaded.message ?? 'upload failed'));
+    const uploadType = contentType || (input.kind === 'photo' ? 'image/jpeg' : 'video/mp4');
+    const uploadName = input.mediaFilename ?? (input.kind === 'photo' ? 'postyar.jpg' : 'postyar.mp4');
+    const uploadResponse = await httpMultipartJson<Record<string, unknown>>(
+      reservation.upload_url,
+      {},
+      { fieldName: 'file', filename: uploadName, contentType: uploadType, data: bytes },
+      25_000,
+      true,
+    );
+    const uploaded = uploadResponse.data;
+    if (uploadResponse.status < 200 || uploadResponse.status >= 300) {
+      throw mapHttpToProviderError(uploadResponse.status, String(uploaded.message ?? 'upload failed'));
+    }
     const fileId = String(uploaded.file_id ?? (uploaded.data as Record<string, unknown> | undefined)?.file_id ?? (uploaded.result as Record<string, unknown> | undefined)?.file_id ?? '');
     if (!fileId) throw makeProviderError('UNKNOWN', 'فایل در روبیکا بارگذاری شد اما شناسه فایل دریافت نشد.');
     const decorated = decorateRubikaButtons(input.text || '', input.inlineButtons);
