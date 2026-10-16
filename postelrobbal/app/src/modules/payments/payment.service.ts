@@ -550,6 +550,15 @@ async function applyFirstPurchaseReward(tx: Tx, tenantId: string, amountRial: nu
  * side effects happen in the same transaction as the VERIFIED flip.
  */
 export async function handleCallback(q: CallbackQuery): Promise<CallbackResult> {
+  // Browser redirects are attacker-controlled input. A negative status such as
+  // NOK/failed is not proof that the gateway settled or cancelled the payment.
+  // Do not persist it as FAILED or cache it under the payment id; a later valid
+  // positive callback must still reach server-to-server verification.
+  const reportedStatus = String(q.Status ?? q.status ?? '').trim().toLowerCase();
+  const negativeStatuses = new Set(['nok', '-1', '0', 'fail', 'failed', 'cancel', 'cancelled', 'canceled', 'error']);
+  if (negativeStatuses.has(reportedStatus)) {
+    return { ok: false, message: 'وضعیت بازگشت پرداخت منفی است؛ نتیجه باید از درگاه تأیید شود.' };
+  }
   try {
     const { replayed, value } = await runIdempotent<CallbackResult>(
       'payment_verify',
@@ -605,25 +614,15 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
   // WinaPay explicitly requires PaymentStatus=OK before Verification.
   // Unknown/missing statuses must never be treated as authorization to settle.
   if (payment.gateway === 'winapay' && reported !== 'ok') {
-    // NOK is terminal. An absent/unknown callback status is rejected without
-    // consuming the payment row so a correctly retried WinaPay callback can
-    // still settle the original transaction.
-    if (NEGATIVE_STATUSES.includes(reported)) {
-      await db
-        .update(payments)
-        .set({ state: 'FAILED', metaJson: { ...(payment.metaJson ?? {}), gatewayStatus: reported } })
-        .where(and(eq(payments.id, payment.id), eq(payments.state, payment.state)));
-      await emitEvent({ name: 'payment.failed', tenantId: payment.tenantId, subjectType: 'payment', subjectId: payment.id });
-    }
+    // A non-OK or missing browser-reported status is not terminal. Do not
+    // mutate payment state; only a valid positive callback can reach the
+    // gateway's server-side verification below.
     return { ok: false, message: 'وضعیت بازگشت از ویناپی معتبر نیست.' };
   }
   if (reported !== '' && NEGATIVE_STATUSES.includes(reported)) {
-    await db
-      .update(payments)
-      .set({ state: 'FAILED', metaJson: { ...(payment.metaJson ?? {}), gatewayStatus: reported } })
-      .where(and(eq(payments.id, payment.id), eq(payments.state, payment.state)));
-    await emitEvent({ name: 'payment.failed', tenantId: payment.tenantId, subjectType: 'payment', subjectId: payment.id });
-    return { ok: false, message: 'پرداخت ناموفق بود یا لغو شد.' };
+    // Defensive guard for internal callers. The status supplied by the browser
+    // must never cancel a payment without gateway-side evidence.
+    return { ok: false, message: 'پرداخت ناموفق گزارش شده است؛ وضعیت نهایی تغییر نکرد.' };
   }
 
   if (!payment.authority) throw new AppError(ERR.PAYMENT_VERIFY_FAILED());
