@@ -3,6 +3,7 @@ import { enforceBotWebhookIpLimit } from './webhook-rate-limit.js';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import { parseWith } from '../../core/validation.js';
+import { normalizeButtonTargetValue } from '../../core/button-target.js';
 import {
   listBots, connectBot, verifyBot, enableBot, disableBot, setBotMode, updateAiSettings,
   listBotUsers, exportBotUsers, listBotConversations, listBotConversationMessages, getBotStats, getBotCapabilities, ingestBotWebhook,
@@ -32,6 +33,15 @@ const conversationQuery = paginationQuery.extend({
   platformUserId: z.string().max(190).optional(),
 });
 
+const botButtonUrlSchema = z.string().trim().min(1).max(255).transform((value, ctx) => {
+  try {
+    return normalizeButtonTargetValue('URL', value);
+  } catch {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'نشانی دکمه باید یک لینک معتبر HTTP یا HTTPS باشد.' });
+    return z.NEVER;
+  }
+});
+
 const responsePayloadSchema = z
   .object({
     text: z.string().max(4000).optional(),
@@ -39,7 +49,7 @@ const responsePayloadSchema = z
       .array(
         z.object({
           label: z.string().min(1).max(64),
-          url: z.string().url().max(255).optional(),
+          url: botButtonUrlSchema.optional(),
           callback: z.string().max(64).optional(),
         })
       )
