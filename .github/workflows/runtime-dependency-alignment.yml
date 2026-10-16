@@ -1,0 +1,68 @@
+name: Passenger runtime dependency alignment
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'postelrobbal/api/package.json'
+      - 'postelrobbal/api/package-lock.json'
+      - 'postelrobbal/app/package.json'
+      - 'postelrobbal/app/package-lock.json'
+      - '.github/workflows/runtime-dependency-alignment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-passenger-runtime:
+    name: Verify Passenger runtime dependency lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: postelrobbal/api/package-lock.json
+
+      - name: Require exact dependency contract parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const app = JSON.parse(fs.readFileSync('postelrobbal/app/package.json', 'utf8'));
+          const api = JSON.parse(fs.readFileSync('postelrobbal/api/package.json', 'utf8'));
+          const same = (a, b) => JSON.stringify(Object.fromEntries(Object.entries(a ?? {}).sort(([x], [y]) => x.localeCompare(y))) )
+            === JSON.stringify(Object.fromEntries(Object.entries(b ?? {}).sort(([x], [y]) => x.localeCompare(y))) );
+          if (!same(app.dependencies, api.dependencies)) {
+            console.error('Passenger runtime dependencies differ from the dependencies used to compile app/dist.');
+            console.error(JSON.stringify({
+              appOnlyOrDifferent: Object.entries(app.dependencies ?? {}).filter(([k, v]) => api.dependencies?.[k] !== v),
+              apiOnlyOrDifferent: Object.entries(api.dependencies ?? {}).filter(([k, v]) => app.dependencies?.[k] !== v),
+            }, null, 2));
+            process.exit(1);
+          }
+          console.log('Passenger runtime dependency ranges exactly match the app build.');
+          if (!same(app.overrides, api.overrides)) {
+            console.error('Passenger runtime overrides differ from the app build.');
+            process.exit(1);
+          }
+          console.log('Passenger runtime overrides match the app build.');
+          NODE
+
+      - name: Install the exact production lockfile
+        working-directory: postelrobbal/api
+        run: npm ci --omit=dev --no-audit --no-fund
+
+      - name: Require zero production dependency advisories
+        working-directory: postelrobbal/api
+        run: npm audit --omit=dev
+
+      - name: Confirm installed runtime dependency tree
+        working-directory: postelrobbal/api
+        run: npm ls --omit=dev --depth=0
