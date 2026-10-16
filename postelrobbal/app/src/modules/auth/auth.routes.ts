@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import {
@@ -19,6 +19,7 @@ import { users, subscriptions, plans } from '../../db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { parseWith } from '../../core/validation.js';
 import { getSecuritySettings } from '../admin/system-settings.service.js';
+import { loadEnv } from '../../config/env.js';
 
 const captchaFields = {
   captchaId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
@@ -38,6 +39,10 @@ const registerSchema = z.object({
   referralCode: z.string().max(32).optional(),
   ...captchaFields,
 });
+
+const bootstrapAdminSchema = registerSchema
+  .omit({ referralCode: true })
+  .extend({ bootstrapSecret: z.string().min(32).max(256) });
 
 const loginSchema = z.object({
   identifier: z.string().min(3).max(190),
@@ -120,6 +125,40 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     reply.header('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
     reply.header('content-type', 'application/json; charset=utf-8');
     return { success: true, data: { captchaId, svg } };
+  });
+
+  // First administrator is provisioned only through an explicit,
+  // high-entropy server-secret flow. It cannot promote a user after the
+  // immutable role_bootstrap singleton has been claimed.
+  app.post('/auth/bootstrap-admin', {
+    preHandler: [enforceRegistrationIpLimit],
+    config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
+  }, async (req, reply) => {
+    const input = parse(bootstrapAdminSchema, req.body);
+    const configured = loadEnv().BOOTSTRAP_ADMIN_SECRET ?? '';
+    const suppliedDigest = createHash('sha256').update(input.bootstrapSecret).digest();
+    const configuredDigest = createHash('sha256').update(configured).digest();
+    if (configured.length < 32 || !timingSafeEqual(suppliedDigest, configuredDigest)) {
+      throw new AppError(ERR.FORBIDDEN());
+    }
+
+    const security = await getSecuritySettings();
+    if (!security.registrationEnabled) throw new AppError(ERR.VALIDATION(REGISTRATION_DISABLED));
+    if (security.captchaEnabled) {
+      if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
+      if (!(await verifyCaptcha(input.captchaId, input.captchaText, req.ip))) {
+        throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+      }
+    }
+
+    const { bootstrapSecret: _secret, captchaId: _captchaId, captchaText: _captchaText, ...registration } = input;
+    const { userId } = await registerUser(registration, { ip: req.ip, userAgent: req.headers['user-agent'] }, true);
+    const session = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    setSessionCookie(reply, session.token);
+    const [user] = await getDb().select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) throw new AppError(ERR.INTERNAL());
+    await audit({ action: 'auth.bootstrap_admin', actorId: userId, subjectType: 'user', subjectId: userId, ip: req.ip });
+    return { success: true, data: { user: publicUser(user), csrfToken: issueCsrfToken(session.csrfSecret) } };
   });
 
   app.post('/auth/register', { preHandler: [enforceRegistrationIpLimit], config: { rateLimit: {
