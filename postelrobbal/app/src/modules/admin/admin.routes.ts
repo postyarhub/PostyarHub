@@ -402,6 +402,11 @@ async function uploadTicketAttachment(
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   // Every admin route requires admin.access; sensitive groups declare a finer permission.
   const access = { preHandler: [app.requirePermission('admin.access')] };
+  const usersRead = { preHandler: [app.requirePermission('admin.users.read')] };
+  const paymentsRead = { preHandler: [app.requirePermission('admin.payments.read')] };
+  const auditRead = { preHandler: [app.requirePermission('admin.audit.read')] };
+  const platformRead = { preHandler: [app.requirePermission('admin.platform.read')] };
+  const plansRead = { preHandler: [app.requirePermission('admin.plans.read')] };
   const usersManage = { preHandler: [app.requirePermission('admin.users.manage')] };
   const paymentsReview = { preHandler: [app.requirePermission('admin.payments.review')] };
   const plansManage = { preHandler: [app.requirePermission('admin.plans.manage')] };
@@ -426,7 +431,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- channels / bots (admin-panel v2 list endpoints) ----
-  app.get('/admin/channels', access, async (req) => {
+  app.get('/admin/channels', platformRead, async (req) => {
     const q = (req.query ?? {}) as Record<string, string | undefined>;
     const { page, pageSize } = paging(q);
     const platform = platformQuery(q.platform);
@@ -434,7 +439,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     return { success: true, data };
   });
 
-  app.get('/admin/bots', access, async (req) => {
+  app.get('/admin/bots', platformRead, async (req) => {
     const q = (req.query ?? {}) as Record<string, string | undefined>;
     const { page, pageSize } = paging(q);
     const platform = platformQuery(q.platform);
@@ -443,7 +448,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- users ----
-  app.get('/admin/users', access, async (req) => {
+  app.get('/admin/users', usersRead, async (req) => {
     const q = (req.query ?? {}) as Record<string, string | undefined>;
     const { page, pageSize } = paging(q);
     const data = await listUsers(q.search, page, pageSize);
@@ -451,7 +456,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- user 360° profile (round 18, asovin «پروفایل ۳۶۰ درجه» parity) ----
-  app.get('/admin/users/:id/profile360', access, async (req) => {
+  app.get('/admin/users/:id/profile360', usersRead, async (req) => {
     const data = await getUserProfile360(paramId(req));
     return { success: true, data };
   });
@@ -535,7 +540,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- support team (پشتیبان‌ها, round 19) ----
-  app.get('/admin/support/team', access, async () => {
+  app.get('/admin/support/team', usersRead, async () => {
     const data = await listSupportTeam();
     return { success: true, data };
   });
@@ -621,7 +626,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- payments ----
-  app.get('/admin/payments', access, async (req) => {
+  app.get('/admin/payments', paymentsRead, async (req) => {
     const q = (req.query ?? {}) as Record<string, string | undefined>;
     const { page, pageSize } = paging(q);
     // "status" per contract; legacy callers may still send "state".
@@ -666,7 +671,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- audit logs (admin.access) ----
-  app.get('/admin/audit-logs', access, async (req) => {
+  app.get('/admin/audit-logs', auditRead, async (req) => {
     const q = (req.query ?? {}) as Record<string, string | undefined>;
     const { page, pageSize } = paging(q);
     const data = await listAuditLogs(q.action, page, pageSize);
@@ -674,7 +679,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- plans ----
-  app.get('/admin/plans', access, async () => {
+  app.get('/admin/plans', plansRead, async () => {
     const data = await listPlans();
     return { success: true, data: { plans: data } };
   });
