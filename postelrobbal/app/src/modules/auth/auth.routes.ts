@@ -143,7 +143,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const security = await getSecuritySettings();
-    if (!security.registrationEnabled) throw new AppError(ERR.VALIDATION(REGISTRATION_DISABLED));
+    // This route is separate from public registration and is gated by a
+    // high-entropy server secret plus the one-time database claim. It must
+    // remain available when routine public registration is disabled.
     if (security.captchaEnabled) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
       if (!(await verifyCaptcha(input.captchaId, input.captchaText, req.ip))) {
