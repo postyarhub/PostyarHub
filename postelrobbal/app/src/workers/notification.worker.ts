@@ -1,8 +1,8 @@
 import { Job } from 'bullmq';
-import { createWorker } from '../queue/connection.js';
+import { createWorker, getRedis } from '../queue/connection.js';
 import { createLogger } from '../core/logger.js';
 import { loadEnv } from '../config/env.js';
-import { notifyTenant, deliverChannelNotification } from '../modules/notifications/delivery.js';
+import { notifyTenant, deliverChannelNotification, deletePasswordResetDeliveryToken, PASSWORD_RESET_DELIVERY_KEY_PREFIX } from '../modules/notifications/delivery.js';
 import { sendEmail } from '../providers/email/email.js';
 
 /**
@@ -32,7 +32,9 @@ interface PasswordResetJob {
   tenantId: string;
   email: string;
   mobile: string;
-  token: string;
+  // token is accepted only for jobs enqueued before this hardening release.
+  token?: string;
+  passwordResetTokenId?: string;
 }
 
 function isExpiryWarningJob(data: unknown): data is ExpiryWarningJob {
@@ -52,7 +54,10 @@ function isExpiryWarningJob(data: unknown): data is ExpiryWarningJob {
 
 function isPasswordResetJob(data: unknown): data is PasswordResetJob {
   const d = data as PasswordResetJob;
-  return d?.kind === 'PASSWORD_RESET' && typeof d?.tenantId === 'string' && typeof d?.email === 'string' && typeof d?.token === 'string';
+  return d?.kind === 'PASSWORD_RESET' &&
+    typeof d?.tenantId === 'string' &&
+    typeof d?.email === 'string' &&
+    (typeof d?.passwordResetTokenId === 'string' || typeof d?.token === 'string');
 }
 
 async function handleExpiryWarning(job: Job): Promise<void> {
@@ -69,7 +74,26 @@ async function handlePasswordReset(job: Job): Promise<void> {
     throw new Error('MALFORMED_PASSWORD_RESET_JOB');
   }
   const env = loadEnv();
-  const { tenantId, email, token } = job.data;
+  const { tenantId, email } = job.data;
+  const resetTokenId = job.data.passwordResetTokenId;
+  let token = job.data.token;
+  if (resetTokenId) {
+    token = (await getRedis().get(`${PASSWORD_RESET_DELIVERY_KEY_PREFIX}${resetTokenId}`)) ?? undefined;
+    if (!token) {
+      log.warn({ jobId: job.id, tenantId }, 'password_reset_delivery_token_missing_or_expired');
+      await notifyTenant({
+        tenantId,
+        kind: 'PASSWORD_RESET',
+        titleFa: 'بازیابی رمز عبور',
+        bodyFa: 'درخواست بازیابی رمز عبور شما منقضی شده است. لطفاً دوباره درخواست دهید.',
+      }).catch(() => undefined);
+      return;
+    }
+  }
+  if (!token) {
+    log.warn({ jobId: job.id, tenantId }, 'password_reset_job_missing_token');
+    return;
+  }
 
   if (!env.MAIL_HOST) {
     // Honest v1 (OPERATIONS.md): no SMTP configured → no email, no fake success.
@@ -81,6 +105,7 @@ async function handlePasswordReset(job: Job): Promise<void> {
       titleFa: 'بازیابی رمز عبور',
       bodyFa: 'درخواست بازیابی رمز عبور شما ثبت شد؛ اما سرویس‌دهندهٔ ایمیل فعال نیست. لطفاً با پشتیبانی تماس بگیرید.',
     }).catch(() => undefined);
+    if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
     return;
   }
 
@@ -100,6 +125,7 @@ async function handlePasswordReset(job: Job): Promise<void> {
       bodyFa: 'ارسال راهنمای بازیابی رمز عبور ناموفق بود. لطفاً پس از چند دقیقه دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.',
     }).catch(() => undefined);
   }
+  if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
 }
 
 export function startNotificationWorker() {
