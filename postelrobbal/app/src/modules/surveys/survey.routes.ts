@@ -232,6 +232,14 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     if (currentSurvey.status === 'REJECTED') return sendError(reply, 409, 'SURVEY_ALREADY_REJECTED', 'نظرسنجی ردشده مستقیماً قابل تأیید نیست.');
     if (currentSurvey.status === 'PENDING') {
       await db.transaction(async (tx) => {
+        // Serialize all approvals before locking the target survey. Locking
+        // only the target row is insufficient because two different pending
+        // surveys could otherwise both pass a concurrent isFeatured reset.
+        await tx.select({ id: users.id })
+          .from(users)
+          .where(eq(users.role, 'SUPER_ADMIN'))
+          .orderBy(asc(users.id))
+          .for('update');
         // Lock the selected row and verify its state before changing the
         // featured survey, preventing concurrent approve/reject races.
         const locked = await tx.select({ id: surveys.id, status: surveys.status })
