@@ -28,19 +28,21 @@ export interface AdminBellSnapshot {
   unreadTotal: number;
 }
 
-const BELL_SEEN_KEY = 'admin_bell_seen';
+function bellSeenKey(adminId: string): string {
+  return `admin_bell_seen:${adminId}`;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /** lastSeenAt from the seen-marker document; null when absent/unparsable. */
-async function readBellSeenAt(): Promise<string | null> {
+async function readBellSeenAt(adminId: string): Promise<string | null> {
   const db = getDb();
   const [row] = await db
     .select({ valueJson: systemSettings.valueJson })
     .from(systemSettings)
-    .where(eq(systemSettings.settingKey, BELL_SEEN_KEY))
+    .where(eq(systemSettings.settingKey, bellSeenKey(adminId)))
     .limit(1);
   const raw = isRecord(row?.valueJson) ? row.valueJson['seenAt'] : undefined;
   if (typeof raw !== 'string' || raw.trim() === '') return null;
@@ -78,9 +80,9 @@ function ticketRef(row: { id: string; subject: string; createdAt: Date | null; e
 
 const num = (v: unknown): number => Number(v ?? 0);
 
-export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
+export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSnapshot> {
   const db = getDb();
-  const lastSeenAt = await readBellSeenAt();
+  const lastSeenAt = await readBellSeenAt(adminId);
   const seenDate = lastSeenAt ? new Date(lastSeenAt) : new Date(0);
   const since7d = new Date(Date.now() - 7 * 86400_000);
 
@@ -187,12 +189,12 @@ export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
 }
 
 /** Upserts the seen marker to «now»; returns the stored timestamp. */
-export async function markAdminBellSeen(): Promise<{ lastSeenAt: string }> {
+export async function markAdminBellSeen(adminId: string): Promise<{ lastSeenAt: string }> {
   const db = getDb();
   const lastSeenAt = new Date().toISOString();
   await db
     .insert(systemSettings)
-    .values({ settingKey: BELL_SEEN_KEY, valueJson: { seenAt: lastSeenAt } })
+    .values({ settingKey: bellSeenKey(adminId), valueJson: { seenAt: lastSeenAt } })
     .onDuplicateKeyUpdate({ set: { valueJson: { seenAt: lastSeenAt } } });
   return { lastSeenAt };
 }
