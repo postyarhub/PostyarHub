@@ -107,6 +107,9 @@ jobs:
           fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           NODE
           npm install --no-fund --no-progress
+          # Apply only SemVer-compatible transitive security patches; never use
+          # npm audit fix --force because that attempted an unrelated downgrade.
+          npm audit fix --no-fund --no-progress || true
           mkdir -p "$RUNNER_TEMP/dependency-candidate/app"
           cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/app/"
           npm audit --json > "$RUNNER_TEMP/dependency-candidate/app/audit.json" || true
