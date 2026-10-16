@@ -1,9 +1,9 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import {
-  registerUser, authenticate, requestPasswordReset, confirmPasswordReset,
+  registerUser, authenticate, requestPasswordReset, confirmPasswordReset, normalizeLoginIdentifier,
 } from './auth.service.js';
 import { onUserRegistered } from '../referrals/register-hook.js';
 import {
@@ -19,6 +19,7 @@ import { users, subscriptions, plans } from '../../db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { parseWith } from '../../core/validation.js';
 import { getSecuritySettings } from '../admin/system-settings.service.js';
+import { loadEnv } from '../../config/env.js';
 
 const captchaFields = {
   captchaId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
@@ -38,6 +39,52 @@ const registerSchema = z.object({
   referralCode: z.string().max(32).optional(),
   ...captchaFields,
 });
+
+const bootstrapAdminSchema = registerSchema
+  .omit({ referralCode: true })
+  .extend({ bootstrapSecret: z.string().min(32).max(256) });
+
+const LOGIN_IDENTIFIER_FAILURE_THRESHOLD = 5;
+const LOGIN_IDENTIFIER_FAILURE_WINDOW_SECONDS = 15 * 60;
+const LOGIN_IDENTIFIER_FAILURE_PREFIX = 'postyar:auth:login-fail:';
+const LOGIN_IDENTIFIER_FAILURE_COUNTER_SCRIPT = [
+  "local count = redis.call('INCR', KEYS[1])",
+  'if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end',
+  'return count',
+].join('\n');
+
+function loginFailureKey(identifier: string): string {
+  const digest = createHash('sha256').update(normalizeLoginIdentifier(identifier)).digest('hex');
+  return `${LOGIN_IDENTIFIER_FAILURE_PREFIX}${digest}`;
+}
+
+async function getLoginIdentifierFailures(identifier: string): Promise<number> {
+  try {
+    const raw = await getRedis().get(loginFailureKey(identifier));
+    const count = Number(raw ?? 0);
+    return Number.isSafeInteger(count) && count >= 0 ? count : LOGIN_IDENTIFIER_FAILURE_THRESHOLD;
+  } catch {
+    // The existing IP limiter remains the primary control if Redis is down.
+    return 0;
+  }
+}
+
+async function recordLoginIdentifierFailure(identifier: string): Promise<void> {
+  try {
+    await getRedis().eval(
+      LOGIN_IDENTIFIER_FAILURE_COUNTER_SCRIPT,
+      1,
+      loginFailureKey(identifier),
+      String(LOGIN_IDENTIFIER_FAILURE_WINDOW_SECONDS),
+    );
+  } catch {
+    // Do not convert a rejected login into a 500 when optional abuse telemetry is unavailable.
+  }
+}
+
+async function clearLoginIdentifierFailures(identifier: string): Promise<void> {
+  await getRedis().del(loginFailureKey(identifier)).catch(() => undefined);
+}
 
 const loginSchema = z.object({
   identifier: z.string().min(3).max(190),
@@ -111,15 +158,51 @@ function publicUser(u: {
 }
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
-  // Graphical captcha challenge (public; consumed on first verify attempt).
+  // Graphical CAPTCHA challenge (public; globally one-shot through Redis).
   app.get('/auth/captcha', async (req, reply) => {
-    // Keep CAPTCHA availability independent from Redis; this bounded local
-    // throttle prevents rapid challenge-generation loops in each app process.
-    if (!consumeCaptchaIssuanceSlot(req.ip)) throw new AppError(ERR.RATE_LIMITED());
+    // The shared Redis bucket bounds issuance across all API processes and
+    // fails closed when abuse-control state cannot be checked.
+    if (!(await consumeCaptchaIssuanceSlot(req.ip))) throw new AppError(ERR.RATE_LIMITED());
     const { captchaId, svg } = issueCaptcha(req.ip);
     reply.header('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
     reply.header('content-type', 'application/json; charset=utf-8');
     return { success: true, data: { captchaId, svg } };
+  });
+
+  // First administrator is provisioned only through an explicit,
+  // high-entropy server-secret flow. It cannot promote a user after the
+  // immutable role_bootstrap singleton has been claimed.
+  app.post('/auth/bootstrap-admin', {
+    preHandler: [enforceRegistrationIpLimit],
+    config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
+  }, async (req, reply) => {
+    const input = parse(bootstrapAdminSchema, req.body);
+    const configured = loadEnv().BOOTSTRAP_ADMIN_SECRET ?? '';
+    const suppliedDigest = createHash('sha256').update(input.bootstrapSecret).digest();
+    const configuredDigest = createHash('sha256').update(configured).digest();
+    if (configured.length < 32 || !timingSafeEqual(suppliedDigest, configuredDigest)) {
+      throw new AppError(ERR.FORBIDDEN());
+    }
+
+    const security = await getSecuritySettings();
+    // This route is separate from public registration and is gated by a
+    // high-entropy server secret plus the one-time database claim. It must
+    // remain available when routine public registration is disabled.
+    if (security.captchaEnabled) {
+      if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
+      if (!(await verifyCaptcha(input.captchaId, input.captchaText, req.ip))) {
+        throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+      }
+    }
+
+    const { bootstrapSecret: _secret, captchaId: _captchaId, captchaText: _captchaText, ...registration } = input;
+    const { userId } = await registerUser(registration, { ip: req.ip, userAgent: req.headers['user-agent'] }, true);
+    const session = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    setSessionCookie(reply, session.token);
+    const [user] = await getDb().select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) throw new AppError(ERR.INTERNAL());
+    await audit({ action: 'auth.bootstrap_admin', actorId: userId, subjectType: 'user', subjectId: userId, ip: req.ip });
+    return { success: true, data: { user: publicUser(user), csrfToken: issueCsrfToken(session.csrfSecret) } };
   });
 
   app.post('/auth/register', { preHandler: [enforceRegistrationIpLimit], config: { rateLimit: {
@@ -138,7 +221,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     // Anti-bot gate BEFORE any DB work (item 15). One shot per code.
     if (security.captchaEnabled) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
-      const captchaOk = verifyCaptcha(input.captchaId, input.captchaText, req.ip);
+      const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText, req.ip);
       if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     }
     const { userId } = await registerUser(input, { ip: req.ip, userAgent: req.headers['user-agent'] });
@@ -157,16 +240,27 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
     const input = parse(loginSchema, req.body);
-    // Anti-bot gate BEFORE credential check — identical error whether the
-    // captcha or the credentials failed, so no account state leaks (item 15).
-    // Security setting controls the challenge consistently across auth flows.
     const security = await getSecuritySettings();
-    if (security.captchaEnabled) {
+    const failedAttempts = await getLoginIdentifierFailures(input.identifier);
+    // After repeated failures against one normalized email/mobile, require a
+    // one-use CAPTCHA even if the site-wide CAPTCHA toggle is off. This adds
+    // an identity-scoped friction layer without locking the owner out of the
+    // account or changing the generic credential error response.
+    if (security.captchaEnabled || failedAttempts >= LOGIN_IDENTIFIER_FAILURE_THRESHOLD) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
-      const captchaOk = verifyCaptcha(input.captchaId, input.captchaText, req.ip);
+      const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText, req.ip);
       if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     }
-    const user = await authenticate(input.identifier, input.password);
+    let user;
+    try {
+      user = await authenticate(input.identifier, input.password);
+    } catch (error) {
+      if (error instanceof AppError && error.code === ERR.AUTH_INVALID().code) {
+        await recordLoginIdentifierFailure(input.identifier);
+      }
+      throw error;
+    }
+    await clearLoginIdentifierFailures(input.identifier);
     // Session rotation on login (§40): revoke previous sessions
     await revokeAllUserSessions(user.id);
     const session = await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
@@ -205,7 +299,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const security = await getSecuritySettings();
     if (security.captchaEnabled) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
-      if (!verifyCaptcha(input.captchaId, input.captchaText, req.ip)) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
+      if (!(await verifyCaptcha(input.captchaId, input.captchaText, req.ip))) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     }
     const created = await requestPasswordReset(input.email);
     // Generic response — no account enumeration (§180)

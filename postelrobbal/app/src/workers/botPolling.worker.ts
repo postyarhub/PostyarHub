@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import { getDb } from '../db/client.js';
 import { bots } from '../db/schema.js';
 import { getRedis } from '../queue/connection.js';
@@ -13,6 +13,7 @@ const log = createLogger('bot-poller');
 const POLL_INTERVAL_MS = 2_000;
 const LOCK_TTL_SECONDS = 60;
 const REDIS_PREFIX = 'postyar:botpoll:';
+const BOT_POLL_CURSOR_KEY = `${REDIS_PREFIX}cursor`;
 
 function updateIdOf(update: unknown): number | null {
   if (!update || typeof update !== 'object' || Array.isArray(update)) return null;
@@ -66,12 +67,28 @@ async function tick(): Promise<void> {
   running = true;
   try {
     const db = getDb();
-    const rows = await db
+    const redis = getRedis();
+    const cursor = await redis.get(BOT_POLL_CURSOR_KEY).catch(() => null);
+    const pollingFilter = and(eq(bots.status, 'ACTIVE'), eq(bots.mode, 'POLLING'));
+    let rows = await db
       .select({ id: bots.id, platform: bots.platform, tokenEncrypted: bots.tokenEncrypted })
       .from(bots)
-      .where(and(eq(bots.status, 'ACTIVE'), eq(bots.mode, 'POLLING')))
-      .orderBy(desc(bots.createdAt))
+      .where(and(pollingFilter, ...(cursor ? [gt(bots.id, cursor)] : [])))
+      .orderBy(asc(bots.id))
       .limit(100);
+    // Wrap around after the last page. The persistent cursor prevents permanent
+    // starvation when more than 100 polling bots are connected.
+    if (rows.length === 0 && cursor) {
+      rows = await db
+        .select({ id: bots.id, platform: bots.platform, tokenEncrypted: bots.tokenEncrypted })
+        .from(bots)
+        .where(pollingFilter)
+        .orderBy(asc(bots.id))
+        .limit(100);
+    }
+    if (rows.length > 0) {
+      await redis.set(BOT_POLL_CURSOR_KEY, rows[rows.length - 1]!.id).catch(() => undefined);
+    }
     const batchSize = loadEnv().BOT_POLL_CONCURRENCY;
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);

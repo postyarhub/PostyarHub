@@ -62,6 +62,12 @@ describe('hardened outbound HTTP boundaries', () => {
     await expect(assertSafeUrl('https://[2606:4700:4700::1111]/resource')).resolves.toBeInstanceOf(URL);
   });
 
+  it('rejects URL credentials and nonstandard ports before network access', async () => {
+    await expect(assertSafeUrl('https://user:pass@8.8.8.8/resource')).rejects.toThrow();
+    await expect(assertSafeUrl('https://8.8.8.8:8443/resource')).rejects.toThrow();
+    await expect(assertSafeUrl('http://8.8.8.8:443/resource')).rejects.toThrow();
+  });
+
   it('rejects unsupported schemes', async () => {
     await expect(assertSafeUrl('file:///etc/passwd')).rejects.toThrow();
     await expect(assertSafeUrl('ftp://example.com/file')).rejects.toThrow();

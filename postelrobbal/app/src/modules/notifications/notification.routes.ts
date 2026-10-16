@@ -14,6 +14,9 @@ export const NOTIFICATION_CATEGORIES: Array<{ key: string; labelFa: string; desc
   { key: 'BOT_EVENTS', labelFa: 'رویدادهای ربات', descriptionFa: 'پیام‌ها و تعامل‌های ربات' },
   { key: 'BROADCAST', labelFa: 'اطلاعیه‌های پُست‌یار', descriptionFa: 'اخبار و اطلاعیه‌های سرویس' },
   { key: 'PASSWORD_RESET', labelFa: 'امنیت حساب', descriptionFa: 'بازیابی رمز عبور و هشدارهای امنیتی' },
+  { key: 'SURVEY_APPROVED', labelFa: 'نتیجهٔ بررسی نظرسنجی', descriptionFa: 'اعلان تأیید و انتشار نظرسنجی ثبت‌شده' },
+  { key: 'SURVEY_REJECTED', labelFa: 'نتیجهٔ بررسی نظرسنجی', descriptionFa: 'اعلان رد نظرسنجی و دلیل ثبت‌شده' },
+  { key: 'SURVEY_CLOSED', labelFa: 'وضعیت نظرسنجی', descriptionFa: 'اعلان توقف نمایش نظرسنجی' },
 ];
 
 function prefKey(tenantId: string): string {

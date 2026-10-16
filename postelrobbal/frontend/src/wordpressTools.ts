@@ -60,6 +60,8 @@ let templateEditorOpen = false;
 let editingCampaignId: string | null = null;
 let campaignPickerIds: number[] = [];
 let campaignPickerSiteId = '';
+let campaignPickerLoadSeq = 0;
+let campaignCategoryLoadSeq = 0;
 
 function csrf(): string | null {
   try { return sessionStorage.getItem('py_csrf'); } catch { return null; }
@@ -193,7 +195,7 @@ function safePostyarExternalHttpUrl(value: unknown): string {
 
 function showCampaignPickerDetail(item: AnyRecord, type: 'product' | 'content') {
   const title = esc(item.title ?? 'بدون عنوان');
-  const image = String(item.customImageUrl ?? item.imageUrl ?? '').trim();
+  const image = safePostyarExternalHttpUrl(item.customImageUrl ?? item.imageUrl);
   const categories = Array.isArray(item.categories)
     ? item.categories.map((entry) => esc(typeof entry === 'object' && entry !== null ? (entry as AnyRecord).name ?? '' : entry)).filter(Boolean).join('، ')
     : '';
@@ -235,6 +237,7 @@ function showCampaignPickerDetail(item: AnyRecord, type: 'product' | 'content') 
 }
 
 async function loadCampaignPicker(root: HTMLElement) {
+  const requestSeq = ++campaignPickerLoadSeq;
   const type = root.querySelector<HTMLSelectElement>('[data-campaign-type]')?.value === 'content' ? 'content' : 'product';
   const area = root.querySelector<HTMLElement>('[data-campaign-picker-area]');
   if (!area) return;
@@ -254,6 +257,12 @@ async function loadCampaignPicker(root: HTMLElement) {
     const contentKind = root.querySelector<HTMLSelectElement>('[data-campaign-content-kind]')?.value ?? 'all';
     if (type === 'content' && (contentKind === 'post' || contentKind === 'page')) params.set('contentType', contentKind);
     const data = await request<{ items?: AnyRecord[]; total?: number }>(`${endpoint}?${params.toString()}`);
+    // Do not let an older request for site A overwrite the picker after the
+    // operator selected site B or changed the product/content filter.
+    if (requestSeq !== campaignPickerLoadSeq ||
+        root.querySelector<HTMLSelectElement>('[data-campaign-site]')?.value !== siteId ||
+        (root.querySelector<HTMLSelectElement>('[data-campaign-type]')?.value === 'content' ? 'content' : 'product') !== type ||
+        (root.querySelector<HTMLSelectElement>('[data-campaign-content-kind]')?.value ?? 'all') !== contentKind) return;
     const items = data.items ?? [];
     if (!items.length) {
       list.innerHTML = '<div class="wp-template-preview">موردی پیدا نشد.</div>';
@@ -291,11 +300,15 @@ async function loadCampaignPicker(root: HTMLElement) {
       });
     });
   } catch (error) {
-    list.innerHTML = `<div class="wp-template-preview">${esc(error instanceof Error ? error.message : 'دریافت فهرست ناموفق بود.')}</div>`;
+    if (requestSeq === campaignPickerLoadSeq &&
+        root.querySelector<HTMLSelectElement>('[data-campaign-site]')?.value === siteId) {
+      list.innerHTML = `<div class="wp-template-preview">${esc(error instanceof Error ? error.message : 'دریافت فهرست ناموفق بود.')}</div>`;
+    }
   }
 }
 
 async function loadCampaignCategories(root: HTMLElement) {
+  const requestSeq = ++campaignCategoryLoadSeq;
   const type = root.querySelector<HTMLSelectElement>('[data-campaign-type]')?.value === 'content' ? 'content' : 'product';
   const area = root.querySelector<HTMLElement>('[data-campaign-picker-area]');
   const siteId = root.querySelector<HTMLSelectElement>('[data-campaign-site]')?.value ?? '';
@@ -309,6 +322,10 @@ async function loadCampaignCategories(root: HTMLElement) {
     const contentKind = root.querySelector<HTMLSelectElement>('[data-campaign-content-kind]')?.value ?? 'all';
     if (type === 'content' && (contentKind === 'post' || contentKind === 'page')) params.set('contentType', contentKind);
     const data = await request<{ items?: Array<{ id: number; name: string; slug?: string }> }>(`${endpoint}?${params.toString()}`);
+    if (requestSeq !== campaignCategoryLoadSeq ||
+        root.querySelector<HTMLSelectElement>('[data-campaign-site]')?.value !== siteId ||
+        (root.querySelector<HTMLSelectElement>('[data-campaign-type]')?.value === 'content' ? 'content' : 'product') !== type ||
+        (root.querySelector<HTMLSelectElement>('[data-campaign-content-kind]')?.value ?? 'all') !== contentKind) return;
     const items = data.items ?? [];
     if (!items.length) { list.innerHTML = '<div class="wp-template-preview">برای این سایت دسته‌بندی همگام‌شده‌ای پیدا نشد. ابتدا محتوا را از افزونه وردپرس همگام‌سازی کنید.</div>'; return; }
     list.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">${items.map((item) => `<label style="display:flex;gap:8px;align-items:center;border:1px solid var(--border);padding:9px 10px;border-radius:10px"><input type="checkbox" data-campaign-category-id="${Number(item.id)}"${campaignPickerIds.includes(Number(item.id)) ? ' checked' : ''}><span>${esc(item.name)}</span></label>`).join('')}</div>`;
@@ -325,7 +342,10 @@ async function loadCampaignCategories(root: HTMLElement) {
       });
     });
   } catch (error) {
-    list.innerHTML = `<div class="wp-template-preview">${esc(error instanceof Error ? error.message : 'دریافت دسته‌بندی‌ها ناموفق بود.')}</div>`;
+    if (requestSeq === campaignCategoryLoadSeq &&
+        root.querySelector<HTMLSelectElement>('[data-campaign-site]')?.value === siteId) {
+      list.innerHTML = `<div class="wp-template-preview">${esc(error instanceof Error ? error.message : 'دریافت دسته‌بندی‌ها ناموفق بود.')}</div>`;
+    }
   }
 }
 

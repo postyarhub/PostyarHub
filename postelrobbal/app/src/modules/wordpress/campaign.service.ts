@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, ne, notInArray, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import {
   channels,
@@ -17,9 +17,10 @@ import { newId } from '../../core/ids.js';
 import { audit } from '../../core/audit.js';
 import { outboxRow } from '../../core/outbox.js';
 import { recordAnalyticsEvent } from '../analytics/analytics.service.js';
-import { assertFeature } from '../subscriptions/plan.service.js';
+import { assertFeature, getPlanContext } from '../subscriptions/plan.service.js';
 import { renderTemplate } from '../templates/template.service.js';
 import type { Tx } from '../subscriptions/plan.service.js';
+import { getRedis } from '../../queue/connection.js';
 
 const MAX_CHANNELS = 5;
 const MAX_ITEMS = 20;
@@ -399,7 +400,26 @@ export async function runCampaign(tenantId: string, id: string, force = false) {
       templateBody = template.body;
     }
 
+    // Match the quota serialization boundary used by ordinary publishing.
+    // A campaign may generate many posts in one transaction, so checking once
+    // per item outside this transaction would allow the limit to be exceeded.
+    await tx.select({ id: users.id }).from(users).where(eq(users.id, tenantId)).limit(1).for('update');
+    const planContext = await getPlanContext(tenantId);
+    let availablePostSlots = Number.POSITIVE_INFINITY;
+    if (planContext.limits.max_posts > 0) {
+      const postConditions = [
+        eq(posts.tenantId, tenantId),
+        ne(posts.state, 'DRAFT'),
+        ne(posts.state, 'CANCELLED'),
+        ...(planContext.startedAt ? [gte(posts.createdAt, planContext.startedAt)] : []),
+      ];
+      const [usedRow] = await tx.select({ total: count() }).from(posts).where(and(...postConditions));
+      availablePostSlots = Math.max(0, planContext.limits.max_posts - Number(usedRow?.total ?? 0));
+    }
     const items = await selectItems(tx, campaign);
+    if (items.length > availablePostSlots) {
+      throw new AppError(ERR.QUOTA_EXCEEDED('ارسال پست'));
+    }
     const sentIds = Array.isArray(campaign.sentIdsJson) ? campaign.sentIdsJson.map((x) => Number(x)).filter(Number.isFinite) : [];
     const sentSet = new Set(sentIds);
     let queued = 0;
@@ -413,8 +433,11 @@ export async function runCampaign(tenantId: string, id: string, force = false) {
       const context = campaign.itemType === 'product'
         ? productContext(item as typeof wordpressProducts.$inferSelect, site.siteUrl, campaign.selectionType)
         : contentContext(item as typeof wordpressContents.$inferSelect, site.siteUrl, campaign.selectionType);
-      const body = renderTemplate(templateBody, context);
+      const body = renderTemplate(templateBody, context).trim();
       if (!body) { skipped++; continue; }
+      if (body.length > 4000) {
+        throw new AppError(ERR.VALIDATION('متن خروجی کمپین پس از جای‌گذاری قالب نباید از ۴۰۰۰ نویسه بیشتر باشد.'));
+      }
 
       // Every campaign item gets the same durable post/target state machine as
       // normal publishing. The outbox carries the WordPress-specific rendered
@@ -489,7 +512,24 @@ export async function runCampaign(tenantId: string, id: string, force = false) {
 export async function runDueCampaigns(): Promise<number> {
   const db = getDb();
   const now = new Date();
-  const campaigns = await db.select().from(wordpressCampaigns).where(eq(wordpressCampaigns.isEnabled, 1)).orderBy(asc(wordpressCampaigns.sendTime)).limit(100);
+  // Rotate through stable ULID-ordered pages. A fixed first-page LIMIT lets
+  // the first 100 campaigns starve every campaign created after them forever.
+  const redis = getRedis();
+  const cursorKey = 'postyar:campaign:scheduler-cursor';
+  const cursor = await redis.get(cursorKey).catch(() => null);
+  let campaigns = await db.select().from(wordpressCampaigns)
+    .where(and(eq(wordpressCampaigns.isEnabled, 1), ...(cursor ? [sql`${wordpressCampaigns.id} > ${cursor}`] : [])))
+    .orderBy(asc(wordpressCampaigns.id))
+    .limit(100);
+  if (campaigns.length === 0 && cursor) {
+    campaigns = await db.select().from(wordpressCampaigns)
+      .where(eq(wordpressCampaigns.isEnabled, 1))
+      .orderBy(asc(wordpressCampaigns.id))
+      .limit(100);
+  }
+  if (campaigns.length > 0) {
+    await redis.set(cursorKey, campaigns[campaigns.length - 1]!.id).catch(() => undefined);
+  }
   let ran = 0;
   for (const campaign of campaigns) {
     const [user] = await db.select({ timezone: users.timezone }).from(users).where(eq(users.id, campaign.tenantId)).limit(1);

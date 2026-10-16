@@ -114,8 +114,42 @@ async function createPaymentRow(input: {
   const env = loadEnv();
   const id = newId();
   const gw = await gatewayFor();
+
+  let chargeAmountRial = input.amountRial;
+  let persistedMeta = input.metaJson;
+  if (gw.id === 'winapay') {
+    if (input.purpose === 'WALLET_TOPUP' && chargeAmountRial % 10 !== 0) {
+      throw new AppError(ERR.VALIDATION('برای پرداخت ویناپی، مبلغ شارژ باید مضربی از ۱۰ ریال باشد.'));
+    }
+    if (input.purpose === 'SUBSCRIPTION') {
+      // WinaPay accepts whole Toman only. Store, verify, credit and display the
+      // exact Rial amount that the gateway actually charges, never the
+      // pre-rounded amount that would cause a payment/ledger mismatch.
+      chargeAmountRial = Math.floor(chargeAmountRial / 10) * 10;
+      if (chargeAmountRial < 1_000) {
+        throw new AppError(ERR.VALIDATION('حداقل مبلغ قابل پرداخت با ویناپی ۱۰۰ تومان است.'));
+      }
+      const adjustment = input.amountRial - chargeAmountRial;
+      if (adjustment > 0) {
+        const meta: Record<string, unknown> = { ...(input.metaJson ?? {}), providerRoundingAdjustmentRial: adjustment };
+        const pricing = meta['pricing'];
+        if (pricing && typeof pricing === 'object' && !Array.isArray(pricing)) {
+          const p = pricing as Record<string, unknown>;
+          const listAmount = Number(p['listAmountRial'] ?? input.amountRial);
+          meta['pricing'] = {
+            ...p,
+            finalAmountRial: chargeAmountRial,
+            discountAmountRial: Math.max(0, listAmount - chargeAmountRial),
+            providerRoundingAdjustmentRial: adjustment,
+          };
+        }
+        persistedMeta = meta;
+      }
+    }
+  }
+
   const created = await gw.createPayment({
-    amountRial: input.amountRial,
+    amountRial: chargeAmountRial,
     description: input.description,
     callbackUrl: `${env.API_URL}/api/v1/payments/callback?paymentId=${id}`,
   });
@@ -125,18 +159,18 @@ async function createPaymentRow(input: {
     purpose: input.purpose,
     planId: input.planId,
     months: input.months,
-    amountRial: input.amountRial,
+    amountRial: chargeAmountRial,
     gateway: gw.id,
     authority: created.authority,
     state: 'CREATED',
-    metaJson: input.metaJson,
+    metaJson: persistedMeta,
   });
   await emitEvent({
     name: 'payment.created',
     tenantId: input.tenantId,
     subjectType: 'payment',
     subjectId: id,
-    props: { purpose: input.purpose, amountRial: input.amountRial },
+    props: { purpose: input.purpose, amountRial: chargeAmountRial },
   });
   return { paymentId: id, redirectUrl: created.redirectUrl };
 }
@@ -549,19 +583,34 @@ async function applyFirstPurchaseReward(tx: Tx, tenantId: string, amountRial: nu
  * Wrapped in durable idempotency (scope payment_verify, 24h). All financial
  * side effects happen in the same transaction as the VERIFIED flip.
  */
+class CallbackNotSettled extends Error {
+  constructor(readonly result: CallbackResult) {
+    super('PAYMENT_CALLBACK_NOT_SETTLED');
+  }
+}
+
 export async function handleCallback(q: CallbackQuery): Promise<CallbackResult> {
+  // Browser redirects are untrusted. They may trigger a gateway verification,
+  // but a negative status must never itself mutate the payment or be cached as
+  // a terminal result. Failed verification releases the idempotency key so a
+  // later callback can be rechecked against the provider.
   try {
     const { replayed, value } = await runIdempotent<CallbackResult>(
       'payment_verify',
       q.paymentId,
       86_400,
-      () => verifyAndSettle(q)
+      async () => {
+        const result = await verifyAndSettle(q);
+        if (!result.ok) throw new CallbackNotSettled(result);
+        return result;
+      }
     );
     if (replayed && value.ok) {
       return { ok: true, message: 'پرداخت شما پیش‌تر تأیید و اعمال شده است.' };
     }
     return value;
   } catch (err) {
+    if (err instanceof CallbackNotSettled) return err.result;
     if (err instanceof Error && err.message === 'IDEMPOTENCY_IN_PROGRESS') {
       return { ok: false, message: 'پردازش این پرداخت در حال انجام است. نتیجه به‌زودی اعمال می‌شود.' };
     }
@@ -601,31 +650,14 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
   // Negative/invalid reports fail immediately; other gateways retain their
   // existing server-side verification path (§117 — the browser is never trusted).
   const reported = (q.Status ?? q.status ?? '').trim().toLowerCase();
-  const NEGATIVE_STATUSES = ['nok', '-1', '0', 'fail', 'failed', 'cancel', 'cancelled', 'canceled', 'error'];
   // WinaPay explicitly requires PaymentStatus=OK before Verification.
   // Unknown/missing statuses must never be treated as authorization to settle.
   if (payment.gateway === 'winapay' && reported !== 'ok') {
-    // NOK is terminal. An absent/unknown callback status is rejected without
-    // consuming the payment row so a correctly retried WinaPay callback can
-    // still settle the original transaction.
-    if (NEGATIVE_STATUSES.includes(reported)) {
-      await db
-        .update(payments)
-        .set({ state: 'FAILED', metaJson: { ...(payment.metaJson ?? {}), gatewayStatus: reported } })
-        .where(and(eq(payments.id, payment.id), eq(payments.state, payment.state)));
-      await emitEvent({ name: 'payment.failed', tenantId: payment.tenantId, subjectType: 'payment', subjectId: payment.id });
-    }
+    // A non-OK or missing browser-reported status is not terminal. Do not
+    // mutate payment state; only a valid positive callback can reach the
+    // gateway's server-side verification below.
     return { ok: false, message: 'وضعیت بازگشت از ویناپی معتبر نیست.' };
   }
-  if (reported !== '' && NEGATIVE_STATUSES.includes(reported)) {
-    await db
-      .update(payments)
-      .set({ state: 'FAILED', metaJson: { ...(payment.metaJson ?? {}), gatewayStatus: reported } })
-      .where(and(eq(payments.id, payment.id), eq(payments.state, payment.state)));
-    await emitEvent({ name: 'payment.failed', tenantId: payment.tenantId, subjectType: 'payment', subjectId: payment.id });
-    return { ok: false, message: 'پرداخت ناموفق بود یا لغو شد.' };
-  }
-
   if (!payment.authority) throw new AppError(ERR.PAYMENT_VERIFY_FAILED());
 
   // Verify with the SAME provider that created this payment (payments.gateway
@@ -647,7 +679,10 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
     const flipped = await tx
       .update(payments)
       .set({ state: 'VERIFIED', verifiedAt: new Date(), gatewayRef: verified.refId ?? null })
-      .where(and(eq(payments.id, payment.id), inArray(payments.state, ['CREATED', 'REDIRECTED'])));
+      // FAILED can mean an earlier verification attempt was inconclusive.
+      // Only an affirmative server-to-server result reaches this transition;
+      // atomic state matching still guarantees that financial side effects run once.
+      .where(and(eq(payments.id, payment.id), inArray(payments.state, ['CREATED', 'REDIRECTED', 'FAILED'])));
     const affected = Array.isArray(flipped) ? Number(flipped[0]?.affectedRows ?? 0) : Number((flipped as { affectedRows?: number }).affectedRows ?? 0);
     if (affected !== 1) return;
     applied = true;

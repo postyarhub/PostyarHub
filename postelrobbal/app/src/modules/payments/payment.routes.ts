@@ -48,7 +48,7 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
     };
   });
 
-  app.post('/payments/wallet-topup', { preHandler: [app.requireAuth] }, async (req) => {
+  app.post('/payments/wallet-topup', { preHandler: [app.requireAuth], config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: (req) => req.user?.id ?? req.ip } } }, async (req) => {
     const input = parse(topupSchema, req.body);
     const result = await createWalletTopup(auth(req).id, input.amountRial, input.method);
     return { success: true, data: result };
@@ -57,7 +57,7 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
   // Unified purchase intent (contract 14-contract item 3):
   //   online       → {paymentId, redirectUrl} (existing Zarinpal path)
   //   card_to_card → {paymentId, reference, cards}  (admin-reviewed receipt)
-  app.post('/payments/intent', { preHandler: [app.requireAuth] }, async (req) => {
+  app.post('/payments/intent', { preHandler: [app.requireAuth], config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: (req) => req.user?.id ?? req.ip } } }, async (req) => {
     const input = parse(intentSchema, req.body);
     const result = await createSubscriptionIntent(auth(req).id, input);
     return { success: true, data: result };
@@ -65,7 +65,7 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
 
   // Card-to-card receipt upload (multipart "file" ≤5MB, JPG/PNG/WebP/PDF,
   // magic-byte verified, private storage). Payment must belong to the caller.
-  app.post('/payments/:id/receipt', { preHandler: [app.requireAuth] }, async (req) => {
+  app.post('/payments/:id/receipt', { preHandler: [app.requireAuth], config: { rateLimit: { max: 10, timeWindow: '1 hour', keyGenerator: (req) => req.user?.id ?? req.ip } } }, async (req) => {
     const me = auth(req);
     const { id } = req.params as { id: string };
     if (!ulidish.test(id)) throw new AppError(ERR.VALIDATION('شناسه معتبر نیست.'));
@@ -146,6 +146,6 @@ export async function registerPaymentRoutes(app: FastifyInstance): Promise<void>
     return reply.redirect(`${env.APP_URL}/dashboard/wallet?payment=${flag}`);
   };
 
-  app.get('/payments/callback', gatewayCallback);
-  app.post('/payments/callback', gatewayCallback);
+  app.get('/payments/callback', { config: { rateLimit: { max: 120, timeWindow: '15 minutes' } } }, gatewayCallback);
+  app.post('/payments/callback', { config: { rateLimit: { max: 120, timeWindow: '15 minutes' } } }, gatewayCallback);
 }

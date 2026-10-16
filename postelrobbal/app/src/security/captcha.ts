@@ -1,10 +1,11 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { getRedis } from '../queue/connection.js';
 
 /**
  * Internal graphical anti-bot captcha.
  *
- * V20 deliberately removes Redis and third-party CAPTCHA rendering from this
- * critical authentication path. The challenge answer is derived from an
+ * CAPTCHA state is shared through Redis so replay and issuance limits apply
+ * across all API processes. The challenge answer is derived from an
  * opaque server-generated ID + server secret + request binding. The rendered
  * glyphs are vector blocks (not SVG <text>), so the answer is not present as
  * selectable text in the DOM.
@@ -17,49 +18,36 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 const CAPTCHA_TTL_SECONDS = 300;
 const CAPTCHA_LENGTH = 5;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const MAX_CONSUMED_ENTRIES = 4096;
 const BLOCK = 3;
 
-const consumed = new Map<string, number>();
-
-// CAPTCHA issuance throttle intentionally does not use Redis so challenge
-// rendering remains available when the queue/rate-limit Redis path is unhealthy.
-// It is per process; registration itself also has a shared Redis IP bucket.
-const CAPTCHA_ISSUANCE_WINDOW_MS = 60_000;
+// The source of truth for rate limits and one-use challenges is shared Redis,
+// not per-process memory: a load-balanced deployment must not accept the same
+// challenge once per Passenger process.
+const CAPTCHA_REPLAY_PREFIX = 'postyar:captcha:used:';
+const CAPTCHA_ISSUANCE_PREFIX = 'postyar:captcha:issue:';
+const CAPTCHA_ISSUANCE_WINDOW_SECONDS = 60;
 const CAPTCHA_ISSUANCE_MAX_PER_IP = 30;
-const MAX_ISSUANCE_BUCKETS = 4096;
-type IssuanceBucket = { windowStart: number; count: number };
-const issuanceBuckets = new Map<string, IssuanceBucket>();
-let issuanceOperations = 0;
 
-export function consumeCaptchaIssuanceSlot(binding = ''): boolean {
-  const now = Date.now();
-  const key = createHash('sha256').update(String(binding || 'unknown')).digest('hex');
-  issuanceOperations += 1;
-  if (issuanceOperations % 64 === 0) {
-    for (const [candidate, bucket] of issuanceBuckets) {
-      if (now < bucket.windowStart || now - bucket.windowStart >= CAPTCHA_ISSUANCE_WINDOW_MS) issuanceBuckets.delete(candidate);
-    }
+export async function consumeCaptchaIssuanceSlot(binding = ''): Promise<boolean> {
+  const digest = createHash('sha256').update(String(binding || 'unknown')).digest('hex');
+  const script = [
+    'local count = redis.call("INCR", KEYS[1])',
+    'if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end',
+    'return count',
+  ].join('\n');
+  try {
+    const count = Number(await getRedis().eval(
+      script,
+      1,
+      `${CAPTCHA_ISSUANCE_PREFIX}${digest}`,
+      String(CAPTCHA_ISSUANCE_WINDOW_SECONDS),
+    ));
+    // CAPTCHA issuance is fail-closed if Redis is unavailable or returns an
+    // unexpected value. This endpoint is not allowed to become an abuse bypass.
+    return Number.isSafeInteger(count) && count >= 1 && count <= CAPTCHA_ISSUANCE_MAX_PER_IP;
+  } catch {
+    return false;
   }
-  let bucket = issuanceBuckets.get(key);
-  if (bucket && (now < bucket.windowStart || now - bucket.windowStart >= CAPTCHA_ISSUANCE_WINDOW_MS)) {
-    issuanceBuckets.delete(key);
-    bucket = undefined;
-  }
-  if (!bucket) {
-    if (issuanceBuckets.size >= MAX_ISSUANCE_BUCKETS) {
-      const oldestKey = issuanceBuckets.keys().next().value;
-      if (oldestKey !== undefined) issuanceBuckets.delete(oldestKey);
-    }
-    bucket = { windowStart: now, count: 0 };
-    issuanceBuckets.set(key, bucket);
-  } else {
-    issuanceBuckets.delete(key);
-    issuanceBuckets.set(key, bucket);
-  }
-  if (bucket.count >= CAPTCHA_ISSUANCE_MAX_PER_IP) return false;
-  bucket.count += 1;
-  return true;
 }
 
 // Compact 5x7 bitmap font for the exact captcha alphabet.
@@ -99,17 +87,14 @@ const GLYPHS: Record<string, string[]> = {
 };
 
 function secret(): Buffer {
-  // CSRF_SECRET is mandatory in production and already validated by loadEnv().
-  // ENCRYPTION_KEY is retained as a safe fallback for isolated maintenance use.
-  const value = String(process.env.CSRF_SECRET ?? process.env.ENCRYPTION_KEY ?? '').trim();
+  // Prefer a purpose-separated CAPTCHA_SECRET when configured. The fallback
+  // remains compatible with existing hosts until their private environment is
+  // explicitly updated; never require a new secret merely to boot production.
+  const dedicated = String(process.env.CAPTCHA_SECRET ?? '').trim();
+  const fallback = String(process.env.CSRF_SECRET ?? process.env.ENCRYPTION_KEY ?? '').trim();
+  const value = dedicated || fallback;
   if (value.length < 32) throw new Error('CAPTCHA secret is not configured.');
   return createHash('sha256').update(value).digest();
-}
-
-function pruneConsumed(now = Date.now()): void {
-  for (const [id, expiresAt] of consumed) {
-    if (expiresAt <= now || consumed.size > MAX_CONSUMED_ENTRIES) consumed.delete(id);
-  }
 }
 
 function bindingDigest(binding: string): string {
@@ -191,7 +176,6 @@ function decodeTimestamp(captchaId: string): number | null {
 }
 
 export function issueCaptcha(binding = ''): { captchaId: string; svg: string } {
-  pruneConsumed();
   const nowSeconds = Math.floor(Date.now() / 1000);
   const captchaId = encodeId(nowSeconds);
   const answer = deriveAnswer(captchaId, binding);
@@ -199,26 +183,29 @@ export function issueCaptcha(binding = ''): { captchaId: string; svg: string } {
   return { captchaId, svg };
 }
 
-export function verifyCaptcha(captchaId: string, text: string, binding = ''): boolean {
-  pruneConsumed();
+export async function verifyCaptcha(captchaId: string, text: string, binding = ''): Promise<boolean> {
   const timestamp = decodeTimestamp(captchaId);
   if (timestamp === null) return false;
 
   const now = Math.floor(Date.now() / 1000);
   if (timestamp > now + 30 || now - timestamp > CAPTCHA_TTL_SECONDS) return false;
 
-  if (consumed.has(captchaId)) return false;
-  // Consume a valid, unexpired challenge before checking the submitted answer.
-  // Failed guesses cannot be retried against the same challenge in this process.
-  consumed.set(captchaId, Date.now() + CAPTCHA_TTL_SECONDS * 1000);
+  // Atomic SET NX makes a challenge globally one-shot across all API processes.
+  // Consume before answer comparison so a failed guess cannot be retried.
+  try {
+    const redisKey = `${CAPTCHA_REPLAY_PREFIX}${captchaId}`;
+    const result = await getRedis().set(redisKey, '1', 'EX', CAPTCHA_TTL_SECONDS, 'NX');
+    if (result !== 'OK') return false;
+  } catch {
+    return false; // never accept a CAPTCHA when its replay store is unavailable
+  }
   const normalized = String(text ?? '').trim().toUpperCase();
   if (!/^[A-Z0-9]{5}$/.test(normalized)) return false;
   const expected = deriveAnswer(captchaId, binding);
-  if (normalized !== expected) return false;
-  return true;
+  return normalized === expected;
 }
 
-/** No external socket/Redis resource is used by V20 CAPTCHA. */
+/** Redis owns replay state; no local challenge store needs closing. */
 export async function closeCaptchaStore(): Promise<void> {
-  pruneConsumed();
+  // Intentionally no-op; the shared Redis keys expire automatically.
 }

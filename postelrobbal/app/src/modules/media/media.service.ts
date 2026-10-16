@@ -4,12 +4,13 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { media, mediaAccessTokens, ticketMessageAttachments, ticketMessages, tickets } from '../../db/schema.js';
+import { media, mediaAccessTokens, ticketMessageAttachments, ticketMessages, tickets, users } from '../../db/schema.js';
 import { newId, newToken, sha256Hex } from '../../core/ids.js';
 import { AppError, ERR } from '../../core/errors.js';
 import { audit } from '../../core/audit.js';
 import { loadEnv } from '../../config/env.js';
 import { roleHasPermission } from '../../security/permissions.js';
+import { getPlanContext } from '../subscriptions/plan.service.js';
 
 /**
  * Media storage (§60 path-traversal safe): filenames are server-generated
@@ -148,12 +149,25 @@ export interface ProcessedImage {
   animated: boolean;
 }
 
+const MAX_IMAGE_INPUT_PIXELS = 40_000_000;
+const MAX_IMAGE_FRAMES = 120;
+const MAX_IMAGE_TOTAL_PIXELS = 120_000_000;
+
 export async function processImageToWebp(buf: Buffer, variant: 'media' | 'avatar'): Promise<ProcessedImage> {
   try {
-    // Single metadata scan decides the animated vs static path (round 17 plan).
-    const meta = await sharp(buf, { animated: true }).metadata();
+    // Bound decoder work as well as upload bytes; small compressed files can
+    // still expand into huge rasters or contain pathological animation frames.
+    const meta = await sharp(buf, { animated: true, limitInputPixels: MAX_IMAGE_INPUT_PIXELS }).metadata();
+    const width = Number(meta.width ?? 0);
+    const height = Number(meta.height ?? 0);
+    const pages = Math.max(1, Number(meta.pages ?? 1));
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 ||
+        !Number.isSafeInteger(pages) || pages > MAX_IMAGE_FRAMES ||
+        width * height > MAX_IMAGE_INPUT_PIXELS || width * height * pages > MAX_IMAGE_TOTAL_PIXELS) {
+      throw new Error('IMAGE_RESOURCE_LIMIT');
+    }
     if (variant === 'avatar') {
-      const { data, info } = await sharp(buf)
+      const { data, info } = await sharp(buf, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
         .rotate() // EXIF auto-orient
         .resize({ width: 512, height: 512, fit: 'cover', position: 'centre' })
         .webp({ quality: 85, effort: 4 })
@@ -164,14 +178,14 @@ export async function processImageToWebp(buf: Buffer, variant: 'media' | 'avatar
       // Animated input (animated GIF / animated WebP): the multi-page Sharp
       // instance makes the WebP output animated automatically (sharp ≥0.33 —
       // .webp() no longer takes an `animated` key); q78/effort 3 per round-17 spec.
-      const { data, info } = await sharp(buf, { animated: true })
+      const { data, info } = await sharp(buf, { animated: true, limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
         .rotate()
         .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 78, effort: 3 })
         .toBuffer({ resolveWithObject: true });
       return { buffer: data, width: info.width, height: info.height, animated: true };
     }
-    const { data, info } = await sharp(buf)
+    const { data, info } = await sharp(buf, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
       .rotate()
       .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82, effort: 4 })
@@ -224,27 +238,48 @@ export async function uploadMedia(
   const filename = `${newId()}.${storedExt}`;
   const storagePath = `${tenantDir}/${filename}`;
   const root = storageRoot();
-  await fs.mkdir(path.join(root, tenantDir), { recursive: true });
-  await fs.writeFile(path.join(root, storagePath), stored, { mode: 0o600 });
-
-  const db = getDb();
+  const absolutePath = path.join(root, storagePath);
   const id = newId();
+  const db = getDb();
+  let fileWritten = false;
   try {
-    await db.insert(media).values({
-      id,
-      tenantId,
-      filename,
-      mime: storedMime,
-      sizeBytes: stored.length,
-      width,
-      height,
-      checksum: createHash('sha256').update(stored).digest('hex'),
-      storagePath,
+    await db.transaction(async (tx) => {
+      // Serialise concurrent uploads on the tenant row so parallel requests
+      // cannot both consume the same remaining storage allowance.
+      const [tenant] = await tx.select({ id: users.id }).from(users).where(eq(users.id, tenantId)).limit(1).for('update');
+      if (!tenant) throw new AppError(ERR.NOT_FOUND('حساب کاربری'));
+      const plan = await getPlanContext(tenantId);
+      const [usage] = await tx.select({
+        bytes: sql<string | number | null>`COALESCE(SUM(${media.sizeBytes}), 0)`,
+      }).from(media).where(eq(media.tenantId, tenantId));
+      const usedBytes = Number(usage?.bytes ?? 0);
+      const limitMb = Number(plan.limits.storage_mb);
+      const limitBytes = Math.floor(limitMb * 1024 * 1024);
+      if (!Number.isFinite(limitMb) || limitMb <= 0 || usedBytes + stored.length > limitBytes) {
+        throw new AppError(ERR.QUOTA_EXCEEDED('فضای ذخیره‌سازی'));
+      }
+
+      await fs.mkdir(path.join(root, tenantDir), { recursive: true });
+      await fs.writeFile(absolutePath, stored, { mode: 0o600 });
+      fileWritten = true;
+      await tx.insert(media).values({
+        id,
+        tenantId,
+        filename,
+        mime: storedMime,
+        sizeBytes: stored.length,
+        width,
+        height,
+        checksum: createHash('sha256').update(stored).digest('hex'),
+        storagePath,
+      });
     });
   } catch (err) {
-    await fs.unlink(path.join(root, storagePath)).catch((cleanupErr: unknown) => {
-      if (!(cleanupErr && typeof cleanupErr === 'object' && 'code' in cleanupErr && (cleanupErr as { code?: unknown }).code === 'ENOENT')) throw cleanupErr;
-    });
+    if (fileWritten) {
+      await fs.unlink(absolutePath).catch((cleanupErr: unknown) => {
+        if (!(cleanupErr && typeof cleanupErr === 'object' && 'code' in cleanupErr && (cleanupErr as { code?: unknown }).code === 'ENOENT')) throw cleanupErr;
+      });
+    }
     throw err;
   }
   await audit({ action: 'media.upload', actorId: tenantId, subjectType: 'media', subjectId: id });
@@ -354,14 +389,19 @@ export async function getMediaForViewer(
   const [row] = await db.select().from(media).where(eq(media.id, mediaId)).limit(1);
   if (!row) throw new AppError(ERR.NOT_FOUND('فایل'));
   if (row.tenantId === viewer.id) return row;
-  if (roleHasPermission(viewer.role, 'support.tickets.any')) return row;
 
+  // Support staff may access media only when the media is attached to a ticket,
+  // not arbitrary private uploads that happen to belong to another tenant.
+  const isSupport = roleHasPermission(viewer.role, 'support.tickets.any');
   const [shared] = await db
     .select({ id: ticketMessageAttachments.id })
     .from(ticketMessageAttachments)
     .innerJoin(ticketMessages, eq(ticketMessages.id, ticketMessageAttachments.messageId))
     .innerJoin(tickets, eq(tickets.id, ticketMessages.ticketId))
-    .where(and(eq(ticketMessageAttachments.mediaId, mediaId), eq(tickets.tenantId, viewer.id)))
+    .where(and(
+      eq(ticketMessageAttachments.mediaId, mediaId),
+      ...(isSupport ? [] : [eq(tickets.tenantId, viewer.id)]),
+    ))
     .limit(1);
   if (shared) return row;
   throw new AppError(ERR.NOT_FOUND('فایل'));

@@ -23,7 +23,10 @@ export async function runIdempotent<T>(
 ): Promise<IdempotentResult<T>> {
   const db = getDb();
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
+  const expiresAt = new Date(now.getTime() + Math.max(1, ttlSeconds) * 1000);
+  // A crashed worker must not strand a key for the full result-retention TTL.
+  // The lease is only for active execution; successful results keep the full TTL.
+  const leaseExpiresAt = new Date(now.getTime() + Math.min(Math.max(1, ttlSeconds), 300) * 1000);
 
   await db
     .delete(idempotencyKeys)
@@ -34,9 +37,14 @@ export async function runIdempotent<T>(
       scope,
       idemKey: key,
       state: 'IN_PROGRESS',
-      expiresAt,
+      expiresAt: leaseExpiresAt,
     });
-  } catch {
+  } catch (insertError) {
+    const insertCode = (insertError as { code?: string; errno?: number } | null)?.code;
+    const insertErrno = (insertError as { errno?: number } | null)?.errno;
+    // Only a genuine uniqueness collision is an idempotency replay. Database
+    // outages, lock timeouts and malformed writes must retain their real error.
+    if (insertCode !== 'ER_DUP_ENTRY' && insertErrno !== 1062) throw insertError;
     // Duplicate: read existing state
     const [existing] = await db
       .select()

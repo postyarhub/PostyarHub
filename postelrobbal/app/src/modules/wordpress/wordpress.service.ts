@@ -200,7 +200,11 @@ async function fetchFeaturedImageAsset(
   const url = normalizeFeaturedImageUrl(imageUrl, site.siteUrl);
   let response;
   try {
-    response = await httpBuffer(url, { timeoutMs: 25_000, headers: { accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8' } });
+    response = await httpBuffer(url, {
+      timeoutMs: 25_000,
+      ssrfGuard: true,
+      headers: { accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8' },
+    });
   } catch {
     throw new AppError(ERR.VALIDATION('دریافت تصویر شاخص از وب‌سایت ناموفق بود. آدرس تصویر را در وردپرس بررسی کنید.'));
   }
@@ -583,11 +587,33 @@ export async function publishContent(site: VerifiedSite, content: {content_id:nu
   // Existing site credentials must not bypass a plan downgrade or revoked
   // website-integration entitlement. Keep the check at the side-effect boundary.
   await assertFeature(site.tenantId, 'woocommerce');
-  const settings=await getSiteSettings(site); const channelIds=(settings.channelIds as string[]).slice(0,MAX_PUBLISH_CHANNELS);
-  const db=getDb(); const channelsToUse=channelIds.length?channelIds:(await db.select({id:channels.id}).from(channels).where(and(eq(channels.tenantId,site.tenantId),eq(channels.status,'ACTIVE'))).orderBy(channels.createdAt).limit(MAX_PUBLISH_CHANNELS)).map(x=>x.id);
-  if(!channelsToUse.length) throw new AppError(ERR.VALIDATION('کانال فعالی برای انتشار محتوا یافت نشد.'));
-  const post=await createPost(site.tenantId,{title:content.title.slice(0,190),body:content.body,source:'WORDPRESS',meta:{}} as any);
-  await publishNow(site.tenantId,post.id,channelsToUse); return {postId:post.id,channels:channelsToUse.length};
+  const settings = await getSiteSettings(site);
+  const channelIds = (settings.channelIds as string[]).slice(0, MAX_PUBLISH_CHANNELS);
+  const db = getDb();
+  const channelsToUse = channelIds.length
+    ? channelIds
+    : (await db.select({ id: channels.id }).from(channels)
+      .where(and(eq(channels.tenantId, site.tenantId), eq(channels.status, 'ACTIVE')))
+      .orderBy(channels.createdAt).limit(MAX_PUBLISH_CHANNELS)).map((x) => x.id);
+  if (!channelsToUse.length) throw new AppError(ERR.VALIDATION('کانال فعالی برای انتشار محتوا یافت نشد.'));
+  const post = await createPost(site.tenantId, {
+    title: content.title.slice(0, 190),
+    body: content.body,
+    source: 'WORDPRESS',
+  });
+  try {
+    await publishNow(site.tenantId, post.id, channelsToUse);
+  } catch (error) {
+    // Do not leave an orphan draft when publication failed before the post was
+    // queued. If publishNow committed QUEUED state, this guarded delete is a no-op.
+    await db.delete(posts).where(and(
+      eq(posts.id, post.id),
+      eq(posts.tenantId, site.tenantId),
+      eq(posts.state, 'DRAFT'),
+    )).catch(() => undefined);
+    throw error;
+  }
+  return { postId: post.id, channels: channelsToUse.length };
 }
 
 export interface WordPressContentListFilters {

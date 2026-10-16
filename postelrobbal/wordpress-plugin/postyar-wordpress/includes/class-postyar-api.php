@@ -20,10 +20,28 @@ class Postyar_WP_API {
         $secret = (string) get_option( 'postyar_wp_secret', '' );
         if ( ! $site_key || ! $secret ) return new WP_Error( 'not_connected', 'اتصال پست‌یار هنوز انجام نشده است.' );
 
+        $base = trim( (string) self::base_url() );
+        $parsed_base = wp_parse_url( $base );
+        if ( ! is_array( $parsed_base ) || 'https' !== strtolower( (string) ( $parsed_base['scheme'] ?? '' ) )
+            || empty( $parsed_base['host'] ) || isset( $parsed_base['user'] ) || isset( $parsed_base['pass'] )
+            || isset( $parsed_base['query'] ) || isset( $parsed_base['fragment'] )
+            || preg_match( '/[\\x00-\\x20\\\\]/', $base )
+        ) {
+            return new WP_Error( 'insecure_api_url', 'نشانی API پُست‌یار باید HTTPS معتبر و بدون اطلاعات ورود باشد.' );
+        }
+        $url = trailingslashit( $base ) . ltrim( $path, '/' );
+        $parsed_url = wp_parse_url( $url );
+        if ( ! is_array( $parsed_url ) || 'https' !== strtolower( (string) ( $parsed_url['scheme'] ?? '' ) )
+            || empty( $parsed_url['host'] ) || strtolower( (string) $parsed_url['host'] ) !== strtolower( (string) $parsed_base['host'] )
+        ) {
+            return new WP_Error( 'insecure_api_url', 'نشانی درخواست API معتبر نیست.' );
+        }
+
         $args = array(
             'method' => strtoupper( $method ),
             'timeout' => 20,
-            'redirection' => 3,
+            // Never forward the credential headers to a redirect-selected host.
+            'redirection' => 0,
             'headers' => array(
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json; charset=utf-8',
@@ -33,7 +51,6 @@ class Postyar_WP_API {
             ),
         );
         if ( null !== $body ) $args['body'] = wp_json_encode( $body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-        $url = trailingslashit( self::base_url() ) . ltrim( $path, '/' );
         $response = wp_remote_request( $url, $args );
         if ( is_wp_error( $response ) ) return $response;
 
@@ -61,7 +78,10 @@ class Postyar_WP_API {
                 && preg_match( '/^[0-9a-f]{32}$/i', (string) $json['secret'] )
             ) {
                 $api = isset( $json['api'] ) ? esc_url_raw( (string) $json['api'] ) : '';
-                if ( $api && preg_match( '#^https?://#i', $api ) ) {
+                $api_parts = $api ? wp_parse_url( $api ) : false;
+                if ( $api && is_array( $api_parts ) && 'https' === strtolower( (string) ( $api_parts['scheme'] ?? '' ) )
+                    && ! empty( $api_parts['host'] ) && ! isset( $api_parts['user'] ) && ! isset( $api_parts['pass'] )
+                ) {
                     return array( 'site_key' => $json['site'], 'secret' => $json['secret'], 'api_base_url' => rtrim( $api, '/' ) );
                 }
             }

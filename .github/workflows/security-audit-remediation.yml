@@ -1,0 +1,227 @@
+name: Security audit remediation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'postelrobbal/app/**'
+      - 'postelrobbal/frontend/**'
+      - 'postelrobbal/wordpress-plugin/**'
+      - '.github/workflows/security-audit-remediation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend typecheck, tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: postelrobbal/app/package-lock.json
+      - name: Install dependencies
+        working-directory: postelrobbal/app
+        run: npm ci
+      - name: Dependency vulnerability gate
+        working-directory: postelrobbal/app
+        shell: bash
+        run: |
+          npm audit --json > "$RUNNER_TEMP/postyar-app-npm-audit.json" || true
+          node - "$RUNNER_TEMP/postyar-app-npm-audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const totals = report.metadata?.vulnerabilities ?? {};
+          console.log('APP_AUDIT_TOTALS', JSON.stringify(totals));
+          if (Number(totals.total ?? 0) !== 0) process.exitCode = 1;
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('APP_AUDIT_ITEM', JSON.stringify({
+              name,
+              severity: item.severity,
+              direct: item.isDirect,
+              range: item.range,
+              fixAvailable: item.fixAvailable,
+              advisories: [...new Set(titles)].join('; ').slice(0, 600),
+            }));
+          }
+          NODE
+      - name: Typecheck
+        working-directory: postelrobbal/app
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: postelrobbal/app
+        run: npm test
+      - name: Compile backend
+        working-directory: postelrobbal/app
+        run: npm run build
+
+  wordpress-plugin:
+    name: WordPress connector PHP syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check connector PHP syntax
+        shell: bash
+        run: |
+          if command -v php >/dev/null 2>&1; then
+            php -l postelrobbal/wordpress-plugin/postyar-wordpress/includes/class-postyar-api.php
+          else
+            echo 'PHP CLI unavailable on runner; syntax check skipped.'
+          fi
+
+  dependency-candidate:
+    name: Test and apply verified security dependency upgrades
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare backend dependency candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd postelrobbal/app
+          npm ci
+          npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5
+          npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5 vite@6.4.3
+          # drizzle-kit@0.31.11 still pulls an abandoned loader with an obsolete,
+          # vulnerable nested esbuild. Override only that transitive copy; candidate
+          # typecheck, unit tests, build and audit must all pass before commit.
+          node <<'NODE'
+          const fs = require('node:fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          p.overrides = { ...(p.overrides ?? {}), '@esbuild-kit/core-utils': { ...((p.overrides ?? {})['@esbuild-kit/core-utils'] ?? {}), esbuild: '^0.28.2' } };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          NODE
+          npm install --no-fund --no-progress
+          # Apply only SemVer-compatible transitive security patches; never use
+          # npm audit fix --force because that attempted an unrelated downgrade.
+          npm audit fix --no-fund --no-progress || true
+          mkdir -p "$RUNNER_TEMP/dependency-candidate/app"
+          cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/app/"
+          npm audit --json > "$RUNNER_TEMP/dependency-candidate/app/audit.json" || true
+          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log('CANDIDATE_APP_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('CANDIDATE_APP_AUDIT_ITEM', JSON.stringify({ name, severity: item.severity, direct: item.isDirect, range: item.range, fixAvailable: item.fixAvailable, advisories: [...new Set(titles)].join('; ').slice(0, 600) }));
+          }
+          NODE
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Prepare frontend dependency candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd postelrobbal/frontend
+          npm ci
+          npm install --no-fund --no-progress --save-prod react-router-dom@7.18.4
+          npm audit fix --no-fund --no-progress || true
+          mkdir -p "$RUNNER_TEMP/dependency-candidate/frontend"
+          cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/frontend/"
+          npm audit --json > "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" || true
+          node - "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log('CANDIDATE_FRONTEND_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('CANDIDATE_FRONTEND_AUDIT_ITEM', JSON.stringify({ name, severity: item.severity, direct: item.isDirect, range: item.range, fixAvailable: item.fixAvailable, advisories: [...new Set(titles)].join('; ').slice(0, 600) }));
+          }
+          NODE
+          npm run build
+      - name: Require zero dependency advisories and commit verified lockfiles
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'security/audit-remediation-20261016' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          for (const file of process.argv.slice(2)) {
+            const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const v = report.metadata?.vulnerabilities ?? {};
+            console.log('DEPENDENCY_AUDIT_FINAL', JSON.stringify({ file, vulnerabilities: v }));
+            if (Number(v.total ?? 0) !== 0) process.exitCode = 1;
+          }
+          NODE
+          cp "$RUNNER_TEMP/dependency-candidate/app/package.json" postelrobbal/app/package.json
+          cp "$RUNNER_TEMP/dependency-candidate/app/package-lock.json" postelrobbal/app/package-lock.json
+          cp "$RUNNER_TEMP/dependency-candidate/frontend/package.json" postelrobbal/frontend/package.json
+          cp "$RUNNER_TEMP/dependency-candidate/frontend/package-lock.json" postelrobbal/frontend/package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add postelrobbal/app/package.json postelrobbal/app/package-lock.json postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Verified dependency candidate already matches the branch; no commit needed."
+          else
+            git commit -m "security: update dependencies and remove vulnerable transitive esbuild"
+            git push origin HEAD:security/audit-remediation-20261016
+          fi
+      - name: Upload isolated dependency candidate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postyar-security-dependency-candidate
+          path: ${{ runner.temp }}/dependency-candidate/
+          if-no-files-found: warn
+          retention-days: 3
+
+  frontend:
+    name: Frontend typecheck and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: postelrobbal/frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: postelrobbal/frontend
+        run: npm ci
+      - name: Dependency vulnerability gate
+        working-directory: postelrobbal/frontend
+        shell: bash
+        run: |
+          npm audit --json > "$RUNNER_TEMP/postyar-frontend-npm-audit.json" || true
+          node - "$RUNNER_TEMP/postyar-frontend-npm-audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const totals = report.metadata?.vulnerabilities ?? {};
+          console.log('FRONTEND_AUDIT_TOTALS', JSON.stringify(totals));
+          if (Number(totals.total ?? 0) !== 0) process.exitCode = 1;
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('FRONTEND_AUDIT_ITEM', JSON.stringify({
+              name,
+              severity: item.severity,
+              direct: item.isDirect,
+              range: item.range,
+              fixAvailable: item.fixAvailable,
+              advisories: [...new Set(titles)].join('; ').slice(0, 600),
+            }));
+          }
+          NODE
+      - name: Build
+        working-directory: postelrobbal/frontend
+        run: npm run build

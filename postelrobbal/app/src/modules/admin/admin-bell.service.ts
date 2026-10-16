@@ -1,6 +1,6 @@
 import { and, count, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { payments, systemSettings, tickets, users } from '../../db/schema.js';
+import { payments, systemSettings, tickets, users, surveys } from '../../db/schema.js';
 
 /**
  * Admin bell (round 18, asovin «اعلان‌های سیستمی مدیر» parity, extended).
@@ -23,24 +23,27 @@ export interface BellEntityRef {
 export interface AdminBellSnapshot {
   lastSeenAt: string | null;
   pendingPayments: { count: number; unread: number; latest: BellEntityRef[] };
+  pendingSurveys: { count: number; unread: number; latest: BellEntityRef[] };
   openTickets: { count: number; unread: number; latest: BellEntityRef[] };
   newUsers: { count: number; unread: number; latest: BellEntityRef[] };
   unreadTotal: number;
 }
 
-const BELL_SEEN_KEY = 'admin_bell_seen';
+function bellSeenKey(adminId: string): string {
+  return `admin_bell_seen:${adminId}`;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /** lastSeenAt from the seen-marker document; null when absent/unparsable. */
-async function readBellSeenAt(): Promise<string | null> {
+async function readBellSeenAt(adminId: string): Promise<string | null> {
   const db = getDb();
   const [row] = await db
     .select({ valueJson: systemSettings.valueJson })
     .from(systemSettings)
-    .where(eq(systemSettings.settingKey, BELL_SEEN_KEY))
+    .where(eq(systemSettings.settingKey, bellSeenKey(adminId)))
     .limit(1);
   const raw = isRecord(row?.valueJson) ? row.valueJson['seenAt'] : undefined;
   if (typeof raw !== 'string' || raw.trim() === '') return null;
@@ -78,25 +81,24 @@ function ticketRef(row: { id: string; subject: string; createdAt: Date | null; e
 
 const num = (v: unknown): number => Number(v ?? 0);
 
-export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
+export async function getAdminBellSnapshot(adminId: string, includeManagementDetails = true): Promise<AdminBellSnapshot> {
   const db = getDb();
-  const lastSeenAt = await readBellSeenAt();
+  const lastSeenAt = await readBellSeenAt(adminId);
   const seenDate = lastSeenAt ? new Date(lastSeenAt) : new Date(0);
   const since7d = new Date(Date.now() - 7 * 86400_000);
 
-  // Exactly 7 queries: 1 seen-marker read + per category one grouped
-  // count/unread query (SUM(created_at > seen); the epoch sentinel when no
-  // marker exists yet makes every present row count as unread) and one
-  // "latest 5" join query with only the needed columns.
-  const payAggRows = await db
+  // One seen-marker read, plus count/latest queries for the categories the
+  // caller is authorized to view. SUPPORT requests only ticket data; payment,
+  // user and survey queries are skipped rather than queried and then redacted.
+  const payAggRows = includeManagementDetails ? await db
     .select({
       total: count(),
       unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${payments.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
     })
     .from(payments)
-    .where(eq(payments.state, 'PENDING_REVIEW'));
+    .where(eq(payments.state, 'PENDING_REVIEW')) : [];
 
-  const payLatest = await db
+  const payLatest = includeManagementDetails ? await db
     .select({
       id: payments.id,
       amountRial: payments.amountRial,
@@ -107,7 +109,7 @@ export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
     .leftJoin(users, eq(users.id, payments.tenantId))
     .where(eq(payments.state, 'PENDING_REVIEW'))
     .orderBy(desc(payments.createdAt))
-    .limit(5);
+    .limit(5) : [];
 
   const ticketAggRows = await db
     .select({
@@ -130,15 +132,15 @@ export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
     .orderBy(desc(tickets.createdAt))
     .limit(5);
 
-  const userAggRows = await db
+  const userAggRows = includeManagementDetails ? await db
     .select({
       total: count(),
       unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${users.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
     })
     .from(users)
-    .where(and(eq(users.role, 'USER'), sql`${users.createdAt} >= ${since7d}`));
+    .where(and(eq(users.role, 'USER'), sql`${users.createdAt} >= ${since7d}`)) : [];
 
-  const userLatest = await db
+  const userLatest = includeManagementDetails ? await db
     .select({
       id: users.id,
       firstName: users.firstName,
@@ -149,7 +151,30 @@ export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
     .from(users)
     .where(and(eq(users.role, 'USER'), sql`${users.createdAt} >= ${since7d}`))
     .orderBy(desc(users.createdAt))
-    .limit(5);
+    .limit(5) : [];
+
+  const surveyAggRows = includeManagementDetails ? await db
+    .select({
+      total: count(),
+      unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${surveys.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
+    })
+    .from(surveys)
+    .where(eq(surveys.status, 'PENDING')) : [];
+
+  const surveyLatest = includeManagementDetails ? await db
+    .select({
+      id: surveys.id,
+      question: surveys.question,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      createdAt: surveys.createdAt,
+    })
+    .from(surveys)
+    .leftJoin(users, eq(users.id, surveys.creatorId))
+    .where(eq(surveys.status, 'PENDING'))
+    .orderBy(desc(surveys.createdAt))
+    .limit(5) : [];
 
   const toAgg = (rows: Array<{ total: number; unread: string | number | null }>): AggRow => ({
     total: num(rows[0]?.total),
@@ -176,23 +201,34 @@ export async function getAdminBellSnapshot(): Promise<AdminBellSnapshot> {
       createdAt: r.createdAt ? r.createdAt.toISOString() : null,
     })),
   };
+  const pendingSurveys = {
+    count: toAgg(surveyAggRows).total,
+    unread: toAgg(surveyAggRows).unread,
+    latest: surveyLatest.map((r) => ({
+      id: r.id,
+      title: r.question,
+      sub: r.email ?? (`${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || 'ثبت‌کنندهٔ نظرسنجی'),
+      createdAt: r.createdAt ? r.createdAt.toISOString() : null,
+    })),
+  };
 
   return {
     lastSeenAt,
     pendingPayments,
+    pendingSurveys,
     openTickets,
     newUsers,
-    unreadTotal: pendingPayments.unread + openTickets.unread + newUsers.unread,
+    unreadTotal: pendingPayments.unread + pendingSurveys.unread + openTickets.unread + newUsers.unread,
   };
 }
 
 /** Upserts the seen marker to «now»; returns the stored timestamp. */
-export async function markAdminBellSeen(): Promise<{ lastSeenAt: string }> {
+export async function markAdminBellSeen(adminId: string): Promise<{ lastSeenAt: string }> {
   const db = getDb();
   const lastSeenAt = new Date().toISOString();
   await db
     .insert(systemSettings)
-    .values({ settingKey: BELL_SEEN_KEY, valueJson: { seenAt: lastSeenAt } })
+    .values({ settingKey: bellSeenKey(adminId), valueJson: { seenAt: lastSeenAt } })
     .onDuplicateKeyUpdate({ set: { valueJson: { seenAt: lastSeenAt } } });
   return { lastSeenAt };
 }

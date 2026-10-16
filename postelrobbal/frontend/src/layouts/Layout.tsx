@@ -298,7 +298,19 @@ export function DashboardLayout() {
   }, []);
 
   useEffect(() => {
-    if (me) loadNotifs();
+    if (!me) return;
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') loadNotifs();
+    };
+    refreshVisible();
+    const timer = window.setInterval(refreshVisible, 30000);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
   }, [me, loadNotifs]);
 
   if (loading) {

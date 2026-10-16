@@ -5,6 +5,7 @@ import { users, subscriptions, plans, referrals, passwordResetTokens, sessions }
 import { AppError, ERR } from '../../core/errors.js';
 import { hashPassword, verifyPassword, passwordPolicyOk } from '../../security/passwords.js';
 import { newId, newToken, sha256Hex } from '../../core/ids.js';
+import { getRedis } from '../../queue/connection.js';
 import { emitEvent } from '../../core/events.js';
 import { audit } from '../../core/audit.js';
 
@@ -36,6 +37,12 @@ function normalizeMobile(m: string): string {
   return latin;
 }
 
+/** Normalize login identifiers identically for auth lookup and abuse controls. */
+export function normalizeLoginIdentifier(emailOrMobile: string): string {
+  const raw = emailOrMobile.trim().toLowerCase();
+  return raw.includes('@') ? raw : normalizeMobile(raw);
+}
+
 /** Deterministic per-user referral code (§36). */
 export function referralCodeFor(userId: string): string {
   const h = createHash('sha256').update(`postyar-ref:${userId}`).digest('base64url');
@@ -58,7 +65,11 @@ export async function findReferrerByCode(code: string): Promise<string | null> {
  * guard; a unique single-row role_bootstrap table serializes concurrent
  * first-registrations at the DB level. Client-supplied roles are ignored.
  */
-export async function registerUser(input: RegisterInput, meta: { ip?: string; userAgent?: string }) {
+export async function registerUser(
+  input: RegisterInput,
+  meta: { ip?: string; userAgent?: string },
+  bootstrapAuthorized = false,
+) {
   if (!input.acceptTerms) throw new AppError(ERR.VALIDATION('پذیرش قوانین الزامی است.'));
   if (!passwordPolicyOk(input.password)) throw new AppError(ERR.WEAK_PASSWORD());
   if (input.password !== input.passwordRepeat) throw new AppError(ERR.VALIDATION('تکرار رمز عبور مطابقت ندارد.'));
@@ -82,21 +93,65 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
 
   try {
     await db.transaction(async (tx) => {
-      // Atomic first-user claim. role_bootstrap is a singleton row created by migrations;
-      // the duplicate-key update waits on the row lock, so concurrent registrations all
-      // observe exactly one immutable bootstrap owner.
-      await tx.execute(sql`
-        INSERT INTO role_bootstrap (id, user_id) VALUES (1, ${userId})
-        ON DUPLICATE KEY UPDATE id = id
-      `);
-      // Read the singleton back under row lock. This is deliberately independent
-      // of affectedRows semantics (which vary with mysql2 CLIENT_FOUND_ROWS).
-      const claimRaw = await tx.execute(sql`
-        SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
-      `);
-      const claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
-      const claimed = claimRows[0]?.user_id === userId;
-      const role = claimed ? 'SUPER_ADMIN' : 'USER';
+      let role: 'SUPER_ADMIN' | 'USER' = 'USER';
+      if (bootstrapAuthorized) {
+        // Existing end-user rows do not establish an administrator. Permit
+        // recovery on a legacy database only when there is no SUPER_ADMIN;
+        // the singleton claim below serializes concurrent bootstrap attempts.
+        const existingAdmins = await tx.select({ id: users.id })
+          .from(users).where(eq(users.role, 'SUPER_ADMIN')).limit(1).for('update');
+        if (existingAdmins.length > 0) {
+          throw new AppError(ERR.CONFLICT('مدیر ارشد از قبل وجود دارد؛ راه‌اندازی مدیر اولیه امکان‌پذیر نیست.'));
+        }
+        // The bootstrap route is protected by a separate high-entropy server
+        // secret. The singleton insert is immutable: a second caller cannot
+        // replace the owner or gain SUPER_ADMIN after setup is complete.
+        await tx.execute(sql`
+          INSERT INTO role_bootstrap (id, user_id) VALUES (1, ${userId})
+          ON DUPLICATE KEY UPDATE id = id
+        `);
+        const claimRaw = await tx.execute(sql`
+          SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
+        `);
+        let claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
+        const claimedUserId = claimRows[0]?.user_id;
+        if (claimedUserId !== userId) {
+          // A stale singleton can remain after manual/legacy administrator
+          // removal. Reclaim it only when the recorded owner is not an active
+          // SUPER_ADMIN; the singleton row lock serializes competing requests.
+          const [claimOwner] = claimedUserId
+            ? await tx.select({ id: users.id, role: users.role })
+              .from(users).where(eq(users.id, claimedUserId)).limit(1)
+            : [];
+          if (claimOwner?.role === 'SUPER_ADMIN') {
+            throw new AppError(ERR.CONFLICT('مدیر ارشد از قبل وجود دارد؛ راه‌اندازی مدیر اولیه امکان‌پذیر نیست.'));
+          }
+          await tx.execute(sql`
+            UPDATE role_bootstrap
+            SET user_id = ${userId}, claimed_at = CURRENT_TIMESTAMP
+            WHERE id = 1 AND user_id = ${claimedUserId ?? ''}
+          `);
+          const refreshedRaw = await tx.execute(sql`
+            SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
+          `);
+          claimRows = (Array.isArray(refreshedRaw) ? refreshedRaw[0] : []) as Array<{ user_id: string }>;
+          if (claimRows[0]?.user_id !== userId) {
+            throw new AppError(ERR.CONFLICT('راه‌اندازی مدیر اولیه قبلاً انجام شده است.'));
+          }
+        }
+        role = 'SUPER_ADMIN';
+      } else {
+        // Never let anonymous public registration claim administrator status.
+        // On an uninitialized database ordinary registration stays closed until
+        // the operator completes the explicit bootstrap flow.
+        const claimRaw = await tx.execute(sql`
+          SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
+        `);
+        const claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
+        if (!claimRows[0]?.user_id) {
+          throw new AppError(ERR.CONFLICT('راه‌اندازی امن مدیر اولیه هنوز انجام نشده است.'));
+        }
+      }
 
       await tx.insert(users).values({
         id: userId,
@@ -108,7 +163,7 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
         businessType: input.businessType.trim(),
         passwordHash,
         referralCode: referralCodeFor(userId),
-        role: role as 'SUPER_ADMIN' | 'USER',
+        role,
       });
 
       const [freePlan] = await tx.select({ id: plans.id, periodDays: plans.periodDays }).from(plans).where(eq(plans.code, 'free')).limit(1);
@@ -138,8 +193,8 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
     });
   } catch (err) {
     const msg = String((err as Error).message ?? '');
-    if (msg.includes('uq_users_email')) throw new AppError(ERR.DUPLICATE('این ایمیل'));
-    if (msg.includes('uq_users_mobile')) throw new AppError(ERR.DUPLICATE('این شمارهٔ موبایل'));
+    if (msg.includes('uq_users_email')) throw new AppError(ERR.VALIDATION('ثبت‌نام با این اطلاعات ممکن نیست.'));
+    if (msg.includes('uq_users_mobile')) throw new AppError(ERR.VALIDATION('ثبت‌نام با این اطلاعات ممکن نیست.'));
     if (msg.includes('role_bootstrap')) throw new AppError(ERR.CONFLICT('ثبت‌نام همزمان انجام شد؛ لطفاً دوباره تلاش کنید.'));
     throw err;
   }
@@ -152,7 +207,7 @@ export async function registerUser(input: RegisterInput, meta: { ip?: string; us
 
 export async function authenticate(emailOrMobile: string, password: string) {
   const db = getDb();
-  const ident = emailOrMobile.trim().toLowerCase();
+  const ident = normalizeLoginIdentifier(emailOrMobile);
   const [user] = await db
     .select()
     .from(users)
@@ -171,19 +226,45 @@ export async function authenticate(emailOrMobile: string, password: string) {
   return user;
 }
 
+const PASSWORD_RESET_EMAIL_LIMIT = 3;
+const PASSWORD_RESET_EMAIL_WINDOW_SECONDS = 60 * 60;
+const PASSWORD_RESET_EMAIL_COUNTER_SCRIPT = [
+  "local count = redis.call('INCR', KEYS[1])",
+  "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+  'return count',
+].join('\n');
+
 export async function requestPasswordReset(email: string): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const emailHash = await sha256Hex(normalizedEmail);
+  let requests: number;
+  try {
+    requests = Number(await getRedis().eval(
+      PASSWORD_RESET_EMAIL_COUNTER_SCRIPT,
+      1,
+      `postyar:rate-limit:password-reset-email:${emailHash}`,
+      String(PASSWORD_RESET_EMAIL_WINDOW_SECONDS),
+    ));
+  } catch {
+    // Fail closed: a reset email must not be sent without its abuse-control store.
+    throw new AppError(ERR.INTERNAL());
+  }
   const db = getDb();
-  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
-  if (!user) return false;
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
+  if (!user || !Number.isSafeInteger(requests) || requests < 1 || requests > PASSWORD_RESET_EMAIL_LIMIT) {
+    return false;
+  }
+
   const token = newToken(24);
+  const passwordResetTokenId = newId();
   await db.insert(passwordResetTokens).values({
-    id: newId(),
+    id: passwordResetTokenId,
     userId: user.id,
     tokenHash: await sha256Hex(token),
     expiresAt: new Date(Date.now() + 30 * 60 * 1000), // short-lived, one-time (§179)
   });
   const { enqueuePasswordResetDelivery } = await import('../notifications/delivery.js');
-  await enqueuePasswordResetDelivery(user.id, token);
+  await enqueuePasswordResetDelivery(user.id, passwordResetTokenId, token);
   return true;
 }
 

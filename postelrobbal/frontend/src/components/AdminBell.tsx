@@ -33,10 +33,13 @@ interface BellSection {
 interface AdminBellData {
   lastSeenAt: string | null;
   pendingPayments: BellSection;
+  pendingSurveys?: BellSection;
   openTickets: BellSection;
   newUsers: BellSection;
   unreadTotal: number;
 }
+
+const EMPTY_BELL_SECTION: BellSection = { count: 0, unread: 0, latest: [] };
 
 const BELL_PATH = '/api/v1/admin/notifications/bell';
 const SEEN_PATH = '/api/v1/admin/notifications/bell/seen';
@@ -100,6 +103,7 @@ export function AdminBell() {
   const sections: Array<{ key: string; sec: BellSection; title: string; to: string }> = data
     ? [
       { key: 'payments', sec: data.pendingPayments, title: 'فیش‌های واریزی در انتظار تأیید', to: '/dashboard/admin/payments' },
+      { key: 'surveys', sec: data.pendingSurveys ?? EMPTY_BELL_SECTION, title: 'نظرسنجی‌های در انتظار بررسی', to: '/dashboard/admin/surveys' },
       { key: 'tickets', sec: data.openTickets, title: 'تیکت‌های پشتیبانی باز', to: '/dashboard/admin/tickets' },
       { key: 'users', sec: data.newUsers, title: 'کاربران جدید (۷ روز اخیر)', to: '/dashboard/admin/users' },
     ]

@@ -159,7 +159,7 @@ async function currentPointsTx(tx: Tx, tenantId: string): Promise<number> {
   await tx.execute(sql`INSERT IGNORE INTO wallet_accounts (tenant_id, balance_rial) VALUES (${tenantId}, 0)`);
   await tx.execute(sql`SELECT tenant_id FROM wallet_accounts WHERE tenant_id = ${tenantId} FOR UPDATE`);
   const lockedRaw = await tx.execute(
-    sql`SELECT balance_after FROM point_ledger WHERE tenant_id = ${tenantId} ORDER BY created_at DESC LIMIT 1 FOR UPDATE`
+    sql`SELECT balance_after FROM point_ledger WHERE tenant_id = ${tenantId} ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`
   );
   const lockedRows = (Array.isArray(lockedRaw) ? lockedRaw[0] : (lockedRaw as { rows?: Array<{ balance_after: number | string }> }).rows ?? []) as Array<{ balance_after: number | string }>;
   return Number(lockedRows[0]?.balance_after ?? 0);
@@ -297,7 +297,7 @@ export async function getWalletSummary(tenantId: string): Promise<WalletSummary>
     .select()
     .from(walletLedger)
     .where(eq(walletLedger.tenantId, tenantId))
-    .orderBy(desc(walletLedger.createdAt))
+    .orderBy(desc(walletLedger.createdAt), desc(walletLedger.id))
     .limit(20);
 
   return {

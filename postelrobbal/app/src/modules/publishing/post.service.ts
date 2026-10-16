@@ -36,6 +36,7 @@ export interface CreatePostInput {
   parseMode?: ParseMode;
   mediaId?: string;
   buttons?: PostButtons;
+  source?: 'MANUAL' | 'WORDPRESS';
 }
 
 export interface PostListQuery {
@@ -147,6 +148,9 @@ function ensurePublishableState(state: string): void {
 export async function createPost(tenantId: string, input: CreatePostInput, meta: ActorMeta = {}): Promise<typeof posts.$inferSelect> {
   const db = getDb();
   const body = (input.body ?? '').trim();
+  if (body.length > MAX_POST_BODY_LENGTH) {
+    throw new AppError(ERR.VALIDATION('متن پست پس از آماده‌سازی نباید از ۴۰۰۰ نویسه بیشتر باشد.'));
+  }
   assertFooterLengths(body, input.buttons);
 
   let mediaId: string | null = null;
@@ -190,7 +194,7 @@ export async function createPost(tenantId: string, input: CreatePostInput, meta:
     parseMode: input.parseMode ?? 'NONE',
     mediaId,
     buttonsJson: input.buttons ?? null,
-    source: 'MANUAL',
+    source: input.source ?? 'MANUAL',
     state: 'DRAFT',
   });
   const post = await requireOwnedPost(tenantId, id);
@@ -377,6 +381,9 @@ export async function updateScheduledPost(
   const body = (input.body ?? '').trim();
   const requestedTime = input.scheduledAt;
 
+  if (body.length > MAX_POST_BODY_LENGTH) {
+    throw new AppError(ERR.VALIDATION('متن پست پس از آماده‌سازی نباید از ۴۰۰۰ نویسه بیشتر باشد.'));
+  }
   if (!requestedTime || Number.isNaN(requestedTime.getTime()) || requestedTime.getTime() <= now.getTime()) {
     throw new AppError(ERR.VALIDATION('زمان انتشار باید در آینده باشد.'));
   }

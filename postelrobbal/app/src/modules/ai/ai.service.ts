@@ -32,7 +32,12 @@ function currentPeriodYm(): string {
 type AiQuotaTx = Pick<ReturnType<typeof getDb>, 'insert' | 'update' | 'execute'>;
 
 async function consumeAiQuotaTx(tx: AiQuotaTx, tenantId: string, limit: number, periodYm: string): Promise<void> {
-  if (limit === 0) return; // unlimited
+  // AI is a paid entitlement: zero (including a missing legacy value) means
+  // disabled, never unlimited. Keep this guard at the accounting boundary so
+  // queued and direct-worker paths share the same policy.
+  if (!Number.isFinite(limit) || limit <= 0) {
+    throw new AppError(ERR.PLAN_FEATURE_REQUIRED('هوش مصنوعی'));
+  }
 
   await tx.insert(aiUsageMonthly).values({
     tenantId,

@@ -31,9 +31,38 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const INTERNAL_ERROR_LOG_PATH = path.resolve(__dirname, '../../../logs/api-internal-errors.jsonl');
 const INTERNAL_ERROR_LOG_MAX_BYTES = 1024 * 1024;
+const INTERNAL_ERROR_TRACE_SAMPLE_INTERVAL_MS = 5_000;
+const INTERNAL_ERROR_TRACE_MAX_SIGNATURES = 512;
+const internalErrorTraceLastWrittenAt = new Map<string, number>();
 
-/** Persist only server-side 5xx diagnostics; never record request bodies or credentials. */
+function shouldPersistInternalErrorTrace(req: FastifyRequest, err: unknown, status: number, code: string): boolean {
+  const now = Date.now();
+  const errorName = err instanceof Error ? err.name : 'NonError';
+  const route = req.routeOptions?.url ?? req.url.split('?')[0] ?? '/';
+  const signature = `${req.method}:${route}:${status}:${code}:${errorName}`;
+  const previous = internalErrorTraceLastWrittenAt.get(signature);
+  if (previous !== undefined && now - previous < INTERNAL_ERROR_TRACE_SAMPLE_INTERVAL_MS) return false;
+
+  // Refresh insertion order and bound memory. The normal application logger
+  // still records request failures; this file is a sampled diagnostic trace.
+  internalErrorTraceLastWrittenAt.delete(signature);
+  internalErrorTraceLastWrittenAt.set(signature, now);
+  if (internalErrorTraceLastWrittenAt.size > INTERNAL_ERROR_TRACE_MAX_SIGNATURES) {
+    for (const [key, writtenAt] of internalErrorTraceLastWrittenAt) {
+      if (now - writtenAt >= INTERNAL_ERROR_TRACE_SAMPLE_INTERVAL_MS) internalErrorTraceLastWrittenAt.delete(key);
+    }
+    while (internalErrorTraceLastWrittenAt.size > INTERNAL_ERROR_TRACE_MAX_SIGNATURES) {
+      const oldest = internalErrorTraceLastWrittenAt.keys().next();
+      if (oldest.done) break;
+      internalErrorTraceLastWrittenAt.delete(oldest.value);
+    }
+  }
+  return true;
+}
+
+/** Persist sampled server-side 5xx diagnostics; never record request bodies or credentials. */
 async function persistInternalErrorTrace(req: FastifyRequest, err: unknown, status: number, code: string): Promise<void> {
+  if (!shouldPersistInternalErrorTrace(req, err, status, code)) return;
   try {
     const error = err instanceof Error ? err : new Error(String(err));
     const directory = path.dirname(INTERNAL_ERROR_LOG_PATH);
@@ -132,7 +161,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     const startedAt = (req.raw as unknown as { startedAt?: number }).startedAt ?? Date.now();
     reply.log.info({
       method: req.method,
-      url: req.url,
+      // Query parameters may contain webhook secrets and short-lived media
+      // tokens. Log the matched route (or path only for unmatched requests).
+      url: req.routeOptions?.url ?? req.url.split('?')[0],
       status: reply.statusCode,
       durationMs: Date.now() - startedAt,
       requestId: req.id,
@@ -146,7 +177,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (session) {
       req.user = session;
       // CSRF for mutating requests (skip provider webhooks registered separately)
-      if (MUTATING.has(req.method) && !req.url.startsWith('/api/v1/webhooks') && !req.url.startsWith('/api/v1/payments/callback')) {
+      const requestPath = req.url.split('?')[0] ?? req.url;
+      const isBotProviderWebhook =
+        /^\/api\/v1\/webhooks\/bots\/[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/.test(requestPath);
+      const isPaymentProviderCallback = requestPath === '/api/v1/payments/callback';
+      if (MUTATING.has(req.method) && !isBotProviderWebhook && !isPaymentProviderCallback) {
         const header = req.headers['x-csrf-token'];
         if (!verifyCsrfToken(Array.isArray(header) ? header[0] : header, session.csrfSecret)) {
           throw new AppError(ERR.CSRF_INVALID());
