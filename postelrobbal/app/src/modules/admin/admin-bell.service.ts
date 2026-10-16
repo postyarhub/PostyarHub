@@ -140,9 +140,9 @@ export async function getAdminBellSnapshot(adminId: string, includeManagementDet
       unread: sql<string | number | null>`COALESCE(SUM(CASE WHEN ${users.createdAt} > ${seenDate} THEN 1 ELSE 0 END), 0)`,
     })
     .from(users)
-    .where(and(eq(users.role, 'USER'), sql`${users.createdAt} >= ${since7d}`));
+    .where(and(eq(users.role, 'USER'), sql`${users.createdAt} >= ${since7d}`)) : [];
 
-  const userLatest = await db
+  const userLatest = includeManagementDetails ? await db
     .select({
       id: users.id,
       firstName: users.firstName,
