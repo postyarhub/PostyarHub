@@ -24,6 +24,7 @@ class Postyar_WP_API {
         $parsed_base = wp_parse_url( $base );
         if ( ! is_array( $parsed_base ) || 'https' !== strtolower( (string) ( $parsed_base['scheme'] ?? '' ) )
             || empty( $parsed_base['host'] ) || isset( $parsed_base['user'] ) || isset( $parsed_base['pass'] )
+            || isset( $parsed_base['query'] ) || isset( $parsed_base['fragment'] )
             || preg_match( '/[\\x00-\\x20\\\\]/', $base )
         ) {
             return new WP_Error( 'insecure_api_url', 'نشانی API پُست‌یار باید HTTPS معتبر و بدون اطلاعات ورود باشد.' );
