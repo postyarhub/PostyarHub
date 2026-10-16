@@ -255,15 +255,17 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     }
     // Retry the idempotent insert even if the survey was approved earlier:
     // a transient notification DB failure must not permanently lose the notice.
-    await notifyTenant({
-      tenantId: currentSurvey.creatorId,
-      kind: 'SURVEY_APPROVED',
-      subjectId: id,
-      titleFa: 'نظرسنجی شما تأیید شد',
-      bodyFa: `نظرسنجی «${currentSurvey.question}» تأیید شد و در بخش نظرسنجی برجستهٔ پُست‌یار نمایش داده می‌شود.`,
-    }).catch((error: unknown) => {
-      req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_approval_notification_failed');
-    });
+    if (currentSurvey.creatorId !== req.user!.id) {
+      await notifyTenant({
+        tenantId: currentSurvey.creatorId,
+        kind: 'SURVEY_APPROVED',
+        subjectId: id,
+        titleFa: 'نظرسنجی شما تأیید شد',
+        bodyFa: `نظرسنجی «${currentSurvey.question}» تأیید شد و در بخش نظرسنجی برجستهٔ پُست‌یار نمایش داده می‌شود.`,
+      }).catch((error: unknown) => {
+        req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_approval_notification_failed');
+      });
+    }
     return { success: true, data: { approved: true, featuredSurveyId: id } };
   });
 
@@ -300,17 +302,19 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     // still complete the notification. The unique notification key prevents
     // sending the same result more than once.
     const note = body.data.note?.trim() || currentSurvey.reviewNote?.trim() || '';
-    await notifyTenant({
-      tenantId: currentSurvey.creatorId,
-      kind: 'SURVEY_REJECTED',
-      subjectId: id,
-      titleFa: 'نظرسنجی شما رد شد',
-      bodyFa: note
-        ? `نظرسنجی «${currentSurvey.question}» تأیید نشد. دلیل ثبت‌شده: ${note}`
-        : `نظرسنجی «${currentSurvey.question}» تأیید نشد و در صفحهٔ اصلی نمایش داده نمی‌شود.`,
-    }).catch((error: unknown) => {
-      req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_rejection_notification_failed');
-    });
+    if (currentSurvey.creatorId !== req.user!.id) {
+      await notifyTenant({
+        tenantId: currentSurvey.creatorId,
+        kind: 'SURVEY_REJECTED',
+        subjectId: id,
+        titleFa: 'نظرسنجی شما رد شد',
+        bodyFa: note
+          ? `نظرسنجی «${currentSurvey.question}» تأیید نشد. دلیل ثبت‌شده: ${note}`
+          : `نظرسنجی «${currentSurvey.question}» تأیید نشد و در صفحهٔ اصلی نمایش داده نمی‌شود.`,
+      }).catch((error: unknown) => {
+        req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_rejection_notification_failed');
+      });
+    }
     return { success: true, data: { rejected: true } };
   });
 
