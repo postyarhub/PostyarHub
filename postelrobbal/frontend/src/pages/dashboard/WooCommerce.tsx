@@ -27,7 +27,7 @@ function catalogImageUrl(rawValue: string, siteUrl: string): string {
 }
 
 function catalogHttpUrl(rawValue: unknown): string {
- const raw=String(rawValue??'').trim(); if(!raw || raw.length>2048 || /[\\u0000-\\u001f\\u007f]/.test(raw))return '';
+ const raw=String(rawValue??'').trim(); if(!raw || raw.length>2048 || /[\u0000-\u001f\u007f]/.test(raw))return '';
  try { const url=new URL(raw); return (url.protocol==='http:'||url.protocol==='https:')&&!url.username&&!url.password?url.href:''; } catch { return ''; }
 }
 
