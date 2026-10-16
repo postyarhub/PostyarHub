@@ -148,7 +148,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (session) {
       req.user = session;
       // CSRF for mutating requests (skip provider webhooks registered separately)
-      if (MUTATING.has(req.method) && !req.url.startsWith('/api/v1/webhooks') && !req.url.startsWith('/api/v1/payments/callback')) {
+      const requestPath = req.url.split('?')[0] ?? req.url;
+      const isBotProviderWebhook =
+        /^\/api\/v1\/webhooks\/bots\/[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/.test(requestPath);
+      const isPaymentProviderCallback = requestPath === '/api/v1/payments/callback';
+      if (MUTATING.has(req.method) && !isBotProviderWebhook && !isPaymentProviderCallback) {
         const header = req.headers['x-csrf-token'];
         if (!verifyCsrfToken(Array.isArray(header) ? header[0] : header, session.csrfSecret)) {
           throw new AppError(ERR.CSRF_INVALID());
