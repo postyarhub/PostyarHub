@@ -412,7 +412,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   const plansManage = { preHandler: [app.requirePermission('admin.plans.manage')] };
   const settingsManage = { preHandler: [app.requirePermission('admin.settings.manage')] };
 
-  app.get('/admin/overview', access, async () => {
+  app.get('/admin/overview', platformRead, async () => {
     const data = await getOverview();
     return { success: true, data };
   });
