@@ -76,11 +76,15 @@ jobs:
           fi
 
   dependency-candidate:
-    name: Test security dependency upgrades in an isolated workspace
+    name: Test and apply verified security dependency upgrades
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -93,7 +97,16 @@ jobs:
           npm ci
           npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5
           npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5 vite@6.4.3
-          npm audit fix --no-fund --no-progress || true
+          # drizzle-kit@0.31.11 still pulls an abandoned loader with an obsolete,
+          # vulnerable nested esbuild. Override only that transitive copy; candidate
+          # typecheck, unit tests, build and audit must all pass before commit.
+          node <<'NODE'
+          const fs = require('node:fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          p.overrides = { ...(p.overrides ?? {}), '@esbuild-kit/core-utils': { ...((p.overrides ?? {})['@esbuild-kit/core-utils'] ?? {}), esbuild: '^0.28.2' } };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\\n');
+          NODE
+          npm install --package-lock-only --no-fund --no-progress
           mkdir -p "$RUNNER_TEMP/dependency-candidate/app"
           cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/app/"
           npm audit --json > "$RUNNER_TEMP/dependency-candidate/app/audit.json" || true
@@ -130,6 +143,33 @@ jobs:
           }
           NODE
           npm run build
+      - name: Require zero dependency advisories and commit verified lockfiles
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'security/audit-remediation-20261016' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          for (const file of process.argv.slice(2)) {
+            const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const v = report.metadata?.vulnerabilities ?? {};
+            console.log('DEPENDENCY_AUDIT_FINAL', JSON.stringify({ file, vulnerabilities: v }));
+            if (Number(v.total ?? 0) !== 0) process.exitCode = 1;
+          }
+          NODE
+          cp "$RUNNER_TEMP/dependency-candidate/app/package.json" postelrobbal/app/package.json
+          cp "$RUNNER_TEMP/dependency-candidate/app/package-lock.json" postelrobbal/app/package-lock.json
+          cp "$RUNNER_TEMP/dependency-candidate/frontend/package.json" postelrobbal/frontend/package.json
+          cp "$RUNNER_TEMP/dependency-candidate/frontend/package-lock.json" postelrobbal/frontend/package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add postelrobbal/app/package.json postelrobbal/app/package-lock.json postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Verified dependency candidate already matches the branch; no commit needed."
+          else
+            git commit -m "security: update dependencies and remove vulnerable transitive esbuild"
+            git push origin HEAD:security/audit-remediation-20261016
+          fi
       - name: Upload isolated dependency candidate
         if: always()
         uses: actions/upload-artifact@v4
