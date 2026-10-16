@@ -1,0 +1,59 @@
+name: Security audit remediation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'postelrobbal/app/**'
+      - 'postelrobbal/frontend/**'
+      - 'postelrobbal/wordpress-plugin/**'
+      - '.github/workflows/security-audit-remediation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend typecheck, tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: postelrobbal/app/package-lock.json
+      - name: Install dependencies
+        working-directory: postelrobbal/app
+        run: npm ci
+      - name: Typecheck
+        working-directory: postelrobbal/app
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: postelrobbal/app
+        run: npm test
+      - name: Compile backend
+        working-directory: postelrobbal/app
+        run: npm run build
+
+  frontend:
+    name: Frontend typecheck and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: postelrobbal/frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: postelrobbal/frontend
+        run: npm ci
+      - name: Build
+        working-directory: postelrobbal/frontend
+        run: npm run build
