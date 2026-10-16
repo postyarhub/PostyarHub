@@ -5,6 +5,7 @@ import { and, asc, count, desc, eq, gte, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { surveys, surveyOptions, surveyVotes, surveyEvents, users } from '../../db/schema.js';
+import { notifyTenant } from '../notifications/delivery.js';
 
 const idSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/i, 'شناسه نظرسنجی معتبر نیست.');
 const createSchema = z.object({
@@ -219,16 +220,40 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     if (!parsedId.success) return sendError(reply, 400, 'VALIDATION_ERROR', 'شناسه نظرسنجی معتبر نیست.');
     const id = parsedId.data;
     const db = getDb();
-    const current = await db.select({ id: surveys.id, status: surveys.status }).from(surveys).where(eq(surveys.id, id)).limit(1);
+    const current = await db.select({
+      id: surveys.id,
+      status: surveys.status,
+      creatorId: surveys.creatorId,
+      question: surveys.question,
+    }).from(surveys).where(eq(surveys.id, id)).limit(1);
     const currentSurvey = current[0];
     if (!currentSurvey) return sendError(reply, 404, 'SURVEY_NOT_FOUND', 'نظرسنجی پیدا نشد.');
     if (currentSurvey.status === 'CLOSED') return sendError(reply, 409, 'SURVEY_CLOSED', 'نظرسنجی بسته‌شده دوباره منتشر نمی‌شود.');
-    await db.transaction(async (tx) => {
-      await tx.update(surveys).set({ isFeatured: 0 }).where(eq(surveys.isFeatured, 1));
-      await tx.update(surveys).set({ status: 'APPROVED', isFeatured: 1, reviewedBy: req.user!.id, reviewedAt: new Date(), reviewNote: null })
-        .where(eq(surveys.id, id));
-      await appendEvent(tx, id, req.user!.id, 'APPROVED');
-    });
+    if (currentSurvey.status === 'REJECTED') return sendError(reply, 409, 'SURVEY_ALREADY_REJECTED', 'نظرسنجی ردشده مستقیماً قابل تأیید نیست.');
+    if (currentSurvey.status === 'PENDING') {
+      await db.transaction(async (tx) => {
+        // Lock the selected row and verify its state before changing the
+        // featured survey, preventing concurrent approve/reject races.
+        const locked = await tx.select({ id: surveys.id, status: surveys.status })
+          .from(surveys).where(eq(surveys.id, id)).limit(1).for('update');
+        if (!locked[0] || locked[0].status !== 'PENDING') {
+          throw new Error('SURVEY_REVIEW_STATE_CHANGED');
+        }
+        await tx.update(surveys).set({ isFeatured: 0 }).where(eq(surveys.isFeatured, 1));
+        await tx.update(surveys).set({ status: 'APPROVED', isFeatured: 1, reviewedBy: req.user!.id, reviewedAt: new Date(), reviewNote: null })
+          .where(and(eq(surveys.id, id), eq(surveys.status, 'PENDING')));
+        await appendEvent(tx, id, req.user!.id, 'APPROVED');
+      });
+      await notifyTenant({
+        tenantId: currentSurvey.creatorId,
+        kind: 'SURVEY_APPROVED',
+        subjectId: id,
+        titleFa: 'نظرسنجی شما تأیید شد',
+        bodyFa: `نظرسنجی «${currentSurvey.question}» تأیید شد و در بخش نظرسنجی برجستهٔ پُست‌یار نمایش داده می‌شود.`,
+      }).catch((error: unknown) => {
+        req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_approval_notification_failed');
+      });
+    }
     return { success: true, data: { approved: true, featuredSurveyId: id } };
   });
 
@@ -238,13 +263,40 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     const body = reviewSchema.safeParse(req.body ?? {});
     if (!parsedId.success || !body.success) return sendError(reply, 400, 'VALIDATION_ERROR', 'اطلاعات رد نظرسنجی معتبر نیست.');
     const id = parsedId.data;
-    const current = await getDb().select({ id: surveys.id }).from(surveys).where(eq(surveys.id, id)).limit(1);
-    if (!current.length) return sendError(reply, 404, 'SURVEY_NOT_FOUND', 'نظرسنجی پیدا نشد.');
-    await getDb().transaction(async (tx) => {
-      await tx.update(surveys).set({ status: 'REJECTED', isFeatured: 0, reviewedBy: req.user!.id, reviewedAt: new Date(), reviewNote: body.data.note || null })
-        .where(eq(surveys.id, id));
-      await appendEvent(tx, id, req.user!.id, 'REJECTED', body.data.note || null);
-    });
+    const current = await getDb().select({
+      id: surveys.id,
+      status: surveys.status,
+      creatorId: surveys.creatorId,
+      question: surveys.question,
+    }).from(surveys).where(eq(surveys.id, id)).limit(1);
+    const currentSurvey = current[0];
+    if (!currentSurvey) return sendError(reply, 404, 'SURVEY_NOT_FOUND', 'نظرسنجی پیدا نشد.');
+    if (currentSurvey.status === 'CLOSED') return sendError(reply, 409, 'SURVEY_CLOSED', 'نظرسنجی بسته‌شده قابل رد نیست.');
+    if (currentSurvey.status === 'APPROVED') return sendError(reply, 409, 'SURVEY_ALREADY_APPROVED', 'نظرسنجی تأییدشده را نمی‌توان رد کرد؛ ابتدا وضعیت نمایش آن را مدیریت کنید.');
+    if (currentSurvey.status === 'PENDING') {
+      await getDb().transaction(async (tx) => {
+        const locked = await tx.select({ id: surveys.id, status: surveys.status })
+          .from(surveys).where(eq(surveys.id, id)).limit(1).for('update');
+        if (!locked[0] || locked[0].status !== 'PENDING') {
+          throw new Error('SURVEY_REVIEW_STATE_CHANGED');
+        }
+        await tx.update(surveys).set({ status: 'REJECTED', isFeatured: 0, reviewedBy: req.user!.id, reviewedAt: new Date(), reviewNote: body.data.note || null })
+          .where(and(eq(surveys.id, id), eq(surveys.status, 'PENDING')));
+        await appendEvent(tx, id, req.user!.id, 'REJECTED', body.data.note || null);
+      });
+      const note = body.data.note?.trim();
+      await notifyTenant({
+        tenantId: currentSurvey.creatorId,
+        kind: 'SURVEY_REJECTED',
+        subjectId: id,
+        titleFa: 'نظرسنجی شما رد شد',
+        bodyFa: note
+          ? `نظرسنجی «${currentSurvey.question}» تأیید نشد. دلیل ثبت‌شده: ${note}`
+          : `نظرسنجی «${currentSurvey.question}» تأیید نشد و در صفحهٔ اصلی نمایش داده نمی‌شود.`,
+      }).catch((error: unknown) => {
+        req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_rejection_notification_failed');
+      });
+    }
     return { success: true, data: { rejected: true } };
   });
 
@@ -253,11 +305,33 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
     const parsedId = idSchema.safeParse((req.params as Record<string, unknown>).id);
     if (!parsedId.success) return sendError(reply, 400, 'VALIDATION_ERROR', 'شناسه نظرسنجی معتبر نیست.');
     const id = parsedId.data;
-    const current = await getDb().select({ id: surveys.id }).from(surveys).where(eq(surveys.id, id)).limit(1);
-    if (!current.length) return sendError(reply, 404, 'SURVEY_NOT_FOUND', 'نظرسنجی پیدا نشد.');
+    const current = await getDb().select({
+      id: surveys.id,
+      status: surveys.status,
+      creatorId: surveys.creatorId,
+      question: surveys.question,
+    }).from(surveys).where(eq(surveys.id, id)).limit(1);
+    const currentSurvey = current[0];
+    if (!currentSurvey) return sendError(reply, 404, 'SURVEY_NOT_FOUND', 'نظرسنجی پیدا نشد.');
+    if (currentSurvey.status !== 'APPROVED') return sendError(reply, 409, 'SURVEY_NOT_APPROVED', 'فقط نظرسنجی تأییدشده قابل توقف است.');
     await getDb().transaction(async (tx) => {
-      await tx.update(surveys).set({ status: 'CLOSED', isFeatured: 0, reviewedBy: req.user!.id, reviewedAt: new Date() }).where(eq(surveys.id, id));
+      const locked = await tx.select({ id: surveys.id, status: surveys.status })
+        .from(surveys).where(eq(surveys.id, id)).limit(1).for('update');
+      if (!locked[0] || locked[0].status !== 'APPROVED') {
+        throw new Error('SURVEY_REVIEW_STATE_CHANGED');
+      }
+      await tx.update(surveys).set({ status: 'CLOSED', isFeatured: 0, reviewedBy: req.user!.id, reviewedAt: new Date() })
+        .where(and(eq(surveys.id, id), eq(surveys.status, 'APPROVED')));
       await appendEvent(tx, id, req.user!.id, 'CLOSED');
+    });
+    await notifyTenant({
+      tenantId: currentSurvey.creatorId,
+      kind: 'SURVEY_CLOSED',
+      subjectId: id,
+      titleFa: 'نمایش نظرسنجی شما متوقف شد',
+      bodyFa: `نمایش نظرسنجی «${currentSurvey.question}» از صفحهٔ اصلی پُست‌یار متوقف شد.`,
+    }).catch((error: unknown) => {
+      req.log.warn({ surveyId: id, errorName: error instanceof Error ? error.name : 'Error' }, 'survey_close_notification_failed');
     });
     return { success: true, data: { closed: true } };
   });
