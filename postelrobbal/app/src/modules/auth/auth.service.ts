@@ -5,6 +5,7 @@ import { users, subscriptions, plans, referrals, passwordResetTokens, sessions }
 import { AppError, ERR } from '../../core/errors.js';
 import { hashPassword, verifyPassword, passwordPolicyOk } from '../../security/passwords.js';
 import { newId, newToken, sha256Hex } from '../../core/ids.js';
+import { getRedis } from '../../queue/connection.js';
 import { emitEvent } from '../../core/events.js';
 import { audit } from '../../core/audit.js';
 
@@ -190,19 +191,45 @@ export async function authenticate(emailOrMobile: string, password: string) {
   return user;
 }
 
+const PASSWORD_RESET_EMAIL_LIMIT = 3;
+const PASSWORD_RESET_EMAIL_WINDOW_SECONDS = 60 * 60;
+const PASSWORD_RESET_EMAIL_COUNTER_SCRIPT = [
+  "local count = redis.call('INCR', KEYS[1])",
+  "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
+  'return count',
+].join('\\n');
+
 export async function requestPasswordReset(email: string): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const emailHash = await sha256Hex(normalizedEmail);
+  let requests: number;
+  try {
+    requests = Number(await getRedis().eval(
+      PASSWORD_RESET_EMAIL_COUNTER_SCRIPT,
+      1,
+      `postyar:rate-limit:password-reset-email:${emailHash}`,
+      String(PASSWORD_RESET_EMAIL_WINDOW_SECONDS),
+    ));
+  } catch {
+    // Fail closed: a reset email must not be sent without its abuse-control store.
+    throw new AppError(ERR.INTERNAL());
+  }
   const db = getDb();
-  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
-  if (!user) return false;
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
+  if (!user || !Number.isSafeInteger(requests) || requests < 1 || requests > PASSWORD_RESET_EMAIL_LIMIT) {
+    return false;
+  }
+
   const token = newToken(24);
+  const passwordResetTokenId = newId();
   await db.insert(passwordResetTokens).values({
-    id: newId(),
+    id: passwordResetTokenId,
     userId: user.id,
     tokenHash: await sha256Hex(token),
     expiresAt: new Date(Date.now() + 30 * 60 * 1000), // short-lived, one-time (§179)
   });
   const { enqueuePasswordResetDelivery } = await import('../notifications/delivery.js');
-  await enqueuePasswordResetDelivery(user.id, token);
+  await enqueuePasswordResetDelivery(user.id, passwordResetTokenId, token);
   return true;
 }
 
