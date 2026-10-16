@@ -418,15 +418,17 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- admin bell (round 18, asovin «اعلان‌های سیستمی مدیر» parity) ----
-  app.get('/admin/notifications/bell', access, async () => {
-    const data = await getAdminBellSnapshot();
+  app.get('/admin/notifications/bell', access, async (req) => {
+    const me = auth(req);
+    const data = await getAdminBellSnapshot(me.id);
     return { success: true, data };
   });
 
-  app.post('/admin/notifications/bell/seen', access, async () => {
+  app.post('/admin/notifications/bell/seen', access, async (req) => {
     // No audit: this is a high-frequency UI marker (opening the bell popup),
     // not a state change — an audit row per popup would flood audit_logs.
-    const data = await markAdminBellSeen();
+    const me = auth(req);
+    const data = await markAdminBellSeen(me.id);
     return { success: true, data };
   });
 
