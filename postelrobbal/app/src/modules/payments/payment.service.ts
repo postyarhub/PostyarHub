@@ -583,28 +583,34 @@ async function applyFirstPurchaseReward(tx: Tx, tenantId: string, amountRial: nu
  * Wrapped in durable idempotency (scope payment_verify, 24h). All financial
  * side effects happen in the same transaction as the VERIFIED flip.
  */
-export async function handleCallback(q: CallbackQuery): Promise<CallbackResult> {
-  // Browser redirects are attacker-controlled input. A negative status such as
-  // NOK/failed is not proof that the gateway settled or cancelled the payment.
-  // Do not persist it as FAILED or cache it under the payment id; a later valid
-  // positive callback must still reach server-to-server verification.
-  const reportedStatus = String(q.Status ?? q.status ?? '').trim().toLowerCase();
-  const negativeStatuses = new Set(['nok', '-1', '0', 'fail', 'failed', 'cancel', 'cancelled', 'canceled', 'error']);
-  if (negativeStatuses.has(reportedStatus)) {
-    return { ok: false, message: 'وضعیت بازگشت پرداخت منفی است؛ نتیجه باید از درگاه تأیید شود.' };
+class CallbackNotSettled extends Error {
+  constructor(readonly result: CallbackResult) {
+    super('PAYMENT_CALLBACK_NOT_SETTLED');
   }
+}
+
+export async function handleCallback(q: CallbackQuery): Promise<CallbackResult> {
+  // Browser redirects are untrusted. They may trigger a gateway verification,
+  // but a negative status must never itself mutate the payment or be cached as
+  // a terminal result. Failed verification releases the idempotency key so a
+  // later callback can be rechecked against the provider.
   try {
     const { replayed, value } = await runIdempotent<CallbackResult>(
       'payment_verify',
       q.paymentId,
       86_400,
-      () => verifyAndSettle(q)
+      async () => {
+        const result = await verifyAndSettle(q);
+        if (!result.ok) throw new CallbackNotSettled(result);
+        return result;
+      }
     );
     if (replayed && value.ok) {
       return { ok: true, message: 'پرداخت شما پیش‌تر تأیید و اعمال شده است.' };
     }
     return value;
   } catch (err) {
+    if (err instanceof CallbackNotSettled) return err.result;
     if (err instanceof Error && err.message === 'IDEMPOTENCY_IN_PROGRESS') {
       return { ok: false, message: 'پردازش این پرداخت در حال انجام است. نتیجه به‌زودی اعمال می‌شود.' };
     }
@@ -644,7 +650,6 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
   // Negative/invalid reports fail immediately; other gateways retain their
   // existing server-side verification path (§117 — the browser is never trusted).
   const reported = (q.Status ?? q.status ?? '').trim().toLowerCase();
-  const NEGATIVE_STATUSES = ['nok', '-1', '0', 'fail', 'failed', 'cancel', 'cancelled', 'canceled', 'error'];
   // WinaPay explicitly requires PaymentStatus=OK before Verification.
   // Unknown/missing statuses must never be treated as authorization to settle.
   if (payment.gateway === 'winapay' && reported !== 'ok') {
@@ -653,12 +658,6 @@ async function verifyAndSettle(q: CallbackQuery): Promise<CallbackResult> {
     // gateway's server-side verification below.
     return { ok: false, message: 'وضعیت بازگشت از ویناپی معتبر نیست.' };
   }
-  if (reported !== '' && NEGATIVE_STATUSES.includes(reported)) {
-    // Defensive guard for internal callers. The status supplied by the browser
-    // must never cancel a payment without gateway-side evidence.
-    return { ok: false, message: 'پرداخت ناموفق گزارش شده است؛ وضعیت نهایی تغییر نکرد.' };
-  }
-
   if (!payment.authority) throw new AppError(ERR.PAYMENT_VERIFY_FAILED());
 
   // Verify with the SAME provider that created this payment (payments.gateway
