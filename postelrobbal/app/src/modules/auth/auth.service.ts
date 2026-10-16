@@ -107,9 +107,31 @@ export async function registerUser(
         const claimRaw = await tx.execute(sql`
           SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
         `);
-        const claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
-        if (claimRows[0]?.user_id !== userId) {
-          throw new AppError(ERR.CONFLICT('راه‌اندازی مدیر اولیه قبلاً انجام شده است.'));
+        let claimRows = (Array.isArray(claimRaw) ? claimRaw[0] : []) as Array<{ user_id: string }>;
+        const claimedUserId = claimRows[0]?.user_id;
+        if (claimedUserId !== userId) {
+          // A stale singleton can remain after manual/legacy administrator
+          // removal. Reclaim it only when the recorded owner is not an active
+          // SUPER_ADMIN; the singleton row lock serializes competing requests.
+          const [claimOwner] = claimedUserId
+            ? await tx.select({ id: users.id, role: users.role })
+              .from(users).where(eq(users.id, claimedUserId)).limit(1)
+            : [];
+          if (claimOwner?.role === 'SUPER_ADMIN') {
+            throw new AppError(ERR.CONFLICT('مدیر ارشد از قبل وجود دارد؛ راه‌اندازی مدیر اولیه امکان‌پذیر نیست.'));
+          }
+          await tx.execute(sql`
+            UPDATE role_bootstrap
+            SET user_id = ${userId}, claimed_at = CURRENT_TIMESTAMP
+            WHERE id = 1 AND user_id = ${claimedUserId ?? ''}
+          `);
+          const refreshedRaw = await tx.execute(sql`
+            SELECT user_id FROM role_bootstrap WHERE id = 1 FOR UPDATE
+          `);
+          claimRows = (Array.isArray(refreshedRaw) ? refreshedRaw[0] : []) as Array<{ user_id: string }>;
+          if (claimRows[0]?.user_id !== userId) {
+            throw new AppError(ERR.CONFLICT('راه‌اندازی مدیر اولیه قبلاً انجام شده است.'));
+          }
         }
         role = 'SUPER_ADMIN';
       } else {
