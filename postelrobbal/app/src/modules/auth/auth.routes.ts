@@ -116,10 +116,10 @@ function publicUser(u: {
 }
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
-  // Graphical captcha challenge (public; consumed on first verify attempt).
+  // Graphical CAPTCHA challenge (public; globally one-shot through Redis).
   app.get('/auth/captcha', async (req, reply) => {
-    // Keep CAPTCHA availability independent from Redis; this bounded local
-    // throttle prevents rapid challenge-generation loops in each app process.
+    // The shared Redis bucket bounds issuance across all API processes and
+    // fails closed when abuse-control state cannot be checked.
     if (!(await consumeCaptchaIssuanceSlot(req.ip))) throw new AppError(ERR.RATE_LIMITED());
     const { captchaId, svg } = issueCaptcha(req.ip);
     reply.header('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
