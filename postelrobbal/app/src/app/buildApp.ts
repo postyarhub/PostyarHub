@@ -31,9 +31,38 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const INTERNAL_ERROR_LOG_PATH = path.resolve(__dirname, '../../../logs/api-internal-errors.jsonl');
 const INTERNAL_ERROR_LOG_MAX_BYTES = 1024 * 1024;
+const INTERNAL_ERROR_TRACE_SAMPLE_INTERVAL_MS = 5_000;
+const INTERNAL_ERROR_TRACE_MAX_SIGNATURES = 512;
+const internalErrorTraceLastWrittenAt = new Map<string, number>();
 
-/** Persist only server-side 5xx diagnostics; never record request bodies or credentials. */
+function shouldPersistInternalErrorTrace(req: FastifyRequest, err: unknown, status: number, code: string): boolean {
+  const now = Date.now();
+  const errorName = err instanceof Error ? err.name : 'NonError';
+  const route = req.routeOptions?.url ?? req.url.split('?')[0] ?? '/';
+  const signature = `${req.method}:${route}:${status}:${code}:${errorName}`;
+  const previous = internalErrorTraceLastWrittenAt.get(signature);
+  if (previous !== undefined && now - previous < INTERNAL_ERROR_TRACE_SAMPLE_INTERVAL_MS) return false;
+
+  // Refresh insertion order and bound memory. The normal application logger
+  // still records request failures; this file is a sampled diagnostic trace.
+  internalErrorTraceLastWrittenAt.delete(signature);
+  internalErrorTraceLastWrittenAt.set(signature, now);
+  if (internalErrorTraceLastWrittenAt.size > INTERNAL_ERROR_TRACE_MAX_SIGNATURES) {
+    for (const [key, writtenAt] of internalErrorTraceLastWrittenAt) {
+      if (now - writtenAt >= INTERNAL_ERROR_TRACE_SAMPLE_INTERVAL_MS) internalErrorTraceLastWrittenAt.delete(key);
+    }
+    while (internalErrorTraceLastWrittenAt.size > INTERNAL_ERROR_TRACE_MAX_SIGNATURES) {
+      const oldest = internalErrorTraceLastWrittenAt.keys().next();
+      if (oldest.done) break;
+      internalErrorTraceLastWrittenAt.delete(oldest.value);
+    }
+  }
+  return true;
+}
+
+/** Persist sampled server-side 5xx diagnostics; never record request bodies or credentials. */
 async function persistInternalErrorTrace(req: FastifyRequest, err: unknown, status: number, code: string): Promise<void> {
+  if (!shouldPersistInternalErrorTrace(req, err, status, code)) return;
   try {
     const error = err instanceof Error ? err : new Error(String(err));
     const directory = path.dirname(INTERNAL_ERROR_LOG_PATH);

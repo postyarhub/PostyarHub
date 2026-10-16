@@ -87,9 +87,12 @@ const GLYPHS: Record<string, string[]> = {
 };
 
 function secret(): Buffer {
-  // CSRF_SECRET is mandatory in production and already validated by loadEnv().
-  // ENCRYPTION_KEY is retained as a safe fallback for isolated maintenance use.
-  const value = String(process.env.CSRF_SECRET ?? process.env.ENCRYPTION_KEY ?? '').trim();
+  // Prefer a purpose-separated CAPTCHA_SECRET when configured. The fallback
+  // remains compatible with existing hosts until their private environment is
+  // explicitly updated; never require a new secret merely to boot production.
+  const dedicated = String(process.env.CAPTCHA_SECRET ?? '').trim();
+  const fallback = String(process.env.CSRF_SECRET ?? process.env.ENCRYPTION_KEY ?? '').trim();
+  const value = dedicated || fallback;
   if (value.length < 32) throw new Error('CAPTCHA secret is not configured.');
   return createHash('sha256').update(value).digest();
 }

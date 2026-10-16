@@ -16,6 +16,12 @@ const baseSchema = z.object({
   REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
   SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 chars'),
   CSRF_SECRET: z.string().min(32, 'CSRF_SECRET must be at least 32 chars'),
+  // Optional purpose-separated CAPTCHA HMAC key. If unset, CAPTCHA keeps
+  // backward-compatible derivation from CSRF_SECRET until explicitly provisioned.
+  CAPTCHA_SECRET: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().min(32, 'CAPTCHA_SECRET must be at least 32 chars').optional(),
+  ),
   // Used only to bootstrap the very first administrator on a brand-new DB.
   // Existing deployments may leave it unset after the role_bootstrap row exists.
   BOOTSTRAP_ADMIN_SECRET: z.preprocess(
@@ -86,6 +92,7 @@ export function loadEnv(overrides: Record<string, string | undefined> = {}): Env
     };
     rejectPlaceholder('SESSION_SECRET', env.SESSION_SECRET);
     rejectPlaceholder('CSRF_SECRET', env.CSRF_SECRET);
+    if (env.CAPTCHA_SECRET) rejectPlaceholder('CAPTCHA_SECRET', env.CAPTCHA_SECRET);
     rejectPlaceholder('ENCRYPTION_KEY', env.ENCRYPTION_KEY);
     if (env.BOOTSTRAP_ADMIN_SECRET) rejectPlaceholder('BOOTSTRAP_ADMIN_SECRET', env.BOOTSTRAP_ADMIN_SECRET);
     for (const [name, value] of [['APP_URL', env.APP_URL], ['API_URL', env.API_URL]] as const) {
