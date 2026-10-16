@@ -132,7 +132,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     const startedAt = (req.raw as unknown as { startedAt?: number }).startedAt ?? Date.now();
     reply.log.info({
       method: req.method,
-      url: req.url,
+      // Query parameters may contain webhook secrets and short-lived media
+      // tokens. Log the matched route (or path only for unmatched requests).
+      url: req.routeOptions?.url ?? req.url.split('?')[0],
       status: reply.statusCode,
       durationMs: Date.now() - startedAt,
       requestId: req.id,
