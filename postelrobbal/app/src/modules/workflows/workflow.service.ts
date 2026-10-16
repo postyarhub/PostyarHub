@@ -4,6 +4,7 @@ import { getDb } from '../../db/client.js';
 import { workflows, workflowRuns } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
 import { AppError, ERR } from '../../core/errors.js';
+import { normalizeButtonTargetValue } from '../../core/button-target.js';
 import { audit } from '../../core/audit.js';
 import { WORKFLOW_LIMITS } from './workflow.engine.js';
 import type { WorkflowStep } from './workflow.engine.js';
@@ -17,9 +18,18 @@ import { assertFeature } from '../subscriptions/plan.service.js';
 
 type WorkflowRow = typeof workflows.$inferSelect;
 
+const workflowButtonUrlSchema = z.string().trim().min(1).max(255).transform((value, ctx) => {
+  try {
+    return normalizeButtonTargetValue('URL', value);
+  } catch {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'نشانی دکمه باید یک لینک معتبر HTTP یا HTTPS باشد.' });
+    return z.NEVER;
+  }
+});
+
 const buttonSchema = z.object({
   label: z.string().min(1).max(64),
-  url: z.string().url().max(255).optional(),
+  url: workflowButtonUrlSchema.optional(),
   callback: z.string().max(64).optional(),
 });
 
