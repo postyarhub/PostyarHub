@@ -425,6 +425,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       // Support staff should see ticket activity only. Never include payment
       // amounts, payer email or new-user details in the support bell response.
       data.pendingPayments = { count: 0, unread: 0, latest: [] };
+      data.pendingSurveys = { count: 0, unread: 0, latest: [] };
       data.newUsers = { count: 0, unread: 0, latest: [] };
       data.unreadTotal = data.openTickets.unread;
     }
