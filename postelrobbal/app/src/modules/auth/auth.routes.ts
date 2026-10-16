@@ -163,7 +163,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const security = await getSecuritySettings();
     if (security.captchaEnabled) {
       if (!input.captchaId || !input.captchaText) throw new AppError(ERR.VALIDATION(CAPTCHA_REQUIRED));
-      const captchaOk = verifyCaptcha(input.captchaId, input.captchaText, req.ip);
+      const captchaOk = await verifyCaptcha(input.captchaId, input.captchaText, req.ip);
       if (!captchaOk) throw new AppError(ERR.VALIDATION(CAPTCHA_FAILED));
     }
     const user = await authenticate(input.identifier, input.password);
