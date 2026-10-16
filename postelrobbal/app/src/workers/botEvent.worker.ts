@@ -1,6 +1,7 @@
 import { Worker, type Job } from 'bullmq';
+import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { createWorker } from '../queue/connection.js';
+import { createWorker, getRedis } from '../queue/connection.js';
 import { getDb } from '../db/client.js';
 import { bots, botEvents, botUsers, botCommands, botKeywords, workflows, botConversations, botMessages } from '../db/schema.js';
 import { newId } from '../core/ids.js';
@@ -77,24 +78,30 @@ function coerceButtons(value: unknown): InlineButton[] | undefined {
 export function startBotEventWorker(): Worker {
   const log = createLogger('bot-event-worker');
 
-  // §191 in-memory spam control, bounded and process-local (single worker contract).
-  const sendLog = new Map<string, number[]>();
-  const spamAllowed = (key: string): boolean => {
+  // Shared Redis sliding-window limiter survives worker restarts and prevents
+  // a second worker process from independently resetting the per-chat ceiling.
+  const spamAllowed = async (key: string): Promise<boolean> => {
     const now = Date.now();
-    const recent = (sendLog.get(key) ?? []).filter((t) => now - t < SPAM_WINDOW_MS);
-    if (recent.length >= SPAM_MAX_PER_WINDOW) {
-      sendLog.set(key, recent);
+    const digest = createHash('sha256').update(key).digest('hex');
+    const redisKey = `postyar:bot-event-spam:${digest}`;
+    const script = [
+      "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1] - ARGV[2])",
+      'local used = redis.call("ZCARD", KEYS[1])',
+      'if used >= tonumber(ARGV[3]) then return 0 end',
+      'redis.call("ZADD", KEYS[1], ARGV[1], ARGV[4])',
+      'redis.call("PEXPIRE", KEYS[1], ARGV[2])',
+      'return 1',
+    ].join('\\n');
+    try {
+      const allowed = Number(await getRedis().eval(
+        script, 1, redisKey, String(now), String(SPAM_WINDOW_MS), String(SPAM_MAX_PER_WINDOW), `${now}:${newId()}`,
+      ));
+      return allowed === 1;
+    } catch (err) {
+      // Fail closed if the shared abuse-control store is unavailable.
+      log.error({ errorName: err instanceof Error ? err.name : 'Error' }, 'bot_spam_control_unavailable');
       return false;
     }
-    recent.push(now);
-    sendLog.set(key, recent);
-    if (sendLog.size > 10_000) {
-      for (const [k, v] of sendLog) {
-        if (v.every((t) => now - t >= SPAM_WINDOW_MS)) sendLog.delete(k);
-      }
-      if (sendLog.size > 10_000) sendLog.clear();
-    }
-    return true;
   };
 
   // One failure notification per bot per hour (in-memory guard).
@@ -117,7 +124,7 @@ export function startBotEventWorker(): Worker {
         log.error({ botId: bot.id, platform: bot.platform, expectedChatRef, attemptedChatRef: chatRef, error: err instanceof Error ? err.message : String(err) }, 'bot_cross_route_blocked');
         throw err;
       }
-      if (!spamAllowed(`${bot.id}:${chatRef}`)) {
+      if (!(await spamAllowed(`${bot.id}:${chatRef}`))) {
         log.warn({ botId: bot.id, chatRef }, 'bot_spam_control_drop');
         return;
       }
