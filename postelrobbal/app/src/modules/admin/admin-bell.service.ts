@@ -87,10 +87,11 @@ export async function getAdminBellSnapshot(adminId: string): Promise<AdminBellSn
   const seenDate = lastSeenAt ? new Date(lastSeenAt) : new Date(0);
   const since7d = new Date(Date.now() - 7 * 86400_000);
 
-  // Exactly 7 queries: 1 seen-marker read + per category one grouped
+  // Exactly 9 queries: 1 seen-marker read + per category one grouped
   // count/unread query (SUM(created_at > seen); the epoch sentinel when no
   // marker exists yet makes every present row count as unread) and one
-  // "latest 5" join query with only the needed columns.
+  // "latest 5" query with only the needed columns. Four categories are
+  // included: pending payments, pending surveys, open tickets, and new users.
   const payAggRows = await db
     .select({
       total: count(),
