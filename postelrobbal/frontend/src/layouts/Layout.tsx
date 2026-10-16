@@ -298,7 +298,10 @@ export function DashboardLayout() {
   }, []);
 
   useEffect(() => {
-    if (me) loadNotifs();
+    if (!me) return;
+    loadNotifs();
+    const timer = window.setInterval(loadNotifs, 60_000);
+    return () => window.clearInterval(timer);
   }, [me, loadNotifs]);
 
   if (loading) {
