@@ -343,7 +343,7 @@ export const ADMIN_SECTIONS: AdminSectionGroup[] = [
       { to: '/dashboard/admin/sms', icon: 'notifications', label: 'پیامک', short: 'پیامک' },
       { to: '/dashboard/admin/email', icon: 'posts', label: 'ایمیل', short: 'ایمیل' },
       { to: '/dashboard/admin/tickets', icon: 'support', label: 'تیکت‌های پشتیبانی', short: 'تیکت‌ها' },
-      { to: '/dashboard/admin/surveys', icon: 'adminTickets', label: 'نظرات و پیشنهادات', short: 'نظرات' },
+      { to: '/dashboard/admin/surveys', icon: 'support', label: 'نظرات و پیشنهادات', short: 'نظرات' },
       { to: '/dashboard/admin/support-team', icon: 'support', label: 'تیم پشتیبانی', short: 'پشتیبان‌ها' },
       { to: '/dashboard/admin/broadcast', icon: 'more', label: 'اطلاع‌رسانی', short: 'اطلاع‌رسانی' },
     ],
