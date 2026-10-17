@@ -47,6 +47,11 @@ export interface SendMediaInput extends SendTextInput {
   kind: 'photo' | 'video';
 }
 
+export interface SendMediaGroupInput extends SendTextInput {
+  /** Ordered photo bytes. Official Bot API albums are limited to 2–10 items. */
+  media: Array<{ buffer: Buffer; filename: string; mime: string }>;
+}
+
 export interface SendResult {
   ok: true;
   messageId: string;
@@ -61,6 +66,8 @@ export interface ProviderAdapter {
   getChat(token: string, chatRef: string): Promise<ChatInfo>;
   sendText(token: string, input: SendTextInput): Promise<SendResult>;
   sendMedia(token: string, input: SendMediaInput): Promise<SendResult>;
+  /** Optional official album endpoint; absent adapters use sequential media sends. */
+  sendMediaGroup?(token: string, input: SendMediaGroupInput): Promise<SendResult>;
   editMessageCaption?(token: string, chatRef: string, messageId: string, caption: string): Promise<void>;
   deleteMessage?(token: string, chatRef: string, messageId: string): Promise<void>;
   setWebhook?(token: string, url: string, secret?: string): Promise<void>;
