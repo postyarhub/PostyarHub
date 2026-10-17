@@ -4,6 +4,7 @@ import { createLogger } from '../core/logger.js';
 import { loadEnv } from '../config/env.js';
 import { notifyTenant, deliverChannelNotification, deletePasswordResetDeliveryToken, PASSWORD_RESET_DELIVERY_KEY_PREFIX } from '../modules/notifications/delivery.js';
 import { sendEmail } from '../providers/email/email.js';
+import { getEmailTemplateSettings } from '../modules/admin/system-settings.service.js';
 import { renderEmailTemplate, isEmailNotificationPayload } from '../providers/email/templates.js';
 import { dispatchEmailForBusinessEvent, isBusinessEmailEvent } from '../modules/notifications/email-notifications.js';
 
@@ -98,6 +99,7 @@ async function handlePasswordReset(job: Job): Promise<void> {
   }
 
   const resetMessage = renderEmailTemplate({
+    templateKey: 'password_reset',
     subject: 'بازیابی رمز عبور پُست‌یار',
     preheader: 'برای تعیین رمز عبور جدید از لینک امن زیر استفاده کنید.',
     title: 'بازیابی رمز عبور',
@@ -109,7 +111,7 @@ async function handlePasswordReset(job: Job): Promise<void> {
     buttonLabel: 'تعیین رمز عبور جدید',
     buttonPath: '/reset-password?token=' + encodeURIComponent(token),
     footerNote: 'لینک بازیابی را با هیچ‌کس به اشتراک نگذارید.',
-  }, env.APP_URL);
+  }, env.APP_URL, await getEmailTemplateSettings());
   const result = await sendEmail({
     to: email,
     subject: 'بازیابی رمز عبور پُست‌یار',
@@ -143,10 +145,10 @@ async function handleEmailNotification(job: Job): Promise<void> {
     log.warn({ jobId: job.id }, 'email_notification_job_malformed');
     throw new Error('MALFORMED_EMAIL_NOTIFICATION_JOB');
   }
-  const rendered = renderEmailTemplate(job.data, loadEnv().APP_URL);
+  const rendered = renderEmailTemplate(job.data, loadEnv().APP_URL, await getEmailTemplateSettings());
   const result = await sendEmail({
     to: job.data.to,
-    subject: job.data.subject,
+    subject: rendered.subject,
     text: rendered.text,
     html: rendered.html,
   });
