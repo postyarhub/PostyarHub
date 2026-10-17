@@ -16,11 +16,12 @@ interface EmailState {
   secure: boolean;
   user: string;
   pass: string;
+  passwordConfigured: boolean;
   fromName: string;
   fromEmail: string;
 }
 
-const EMPTY: EmailState = { enabled: false, host: '', port: '', secure: true, user: '', pass: '', fromName: '', fromEmail: '' };
+const EMPTY: EmailState = { enabled: false, host: '', port: '', secure: true, user: '', pass: '', passwordConfigured: false, fromName: '', fromEmail: '' };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -48,7 +49,8 @@ export default function AdminEmail() {
           port: typeof d.port === 'number' ? String(d.port) : strField(d.port),
           secure: boolField(d.secure),
           user: strField(d.user),
-          pass: strField(d.pass),
+          pass: '',
+          passwordConfigured: boolField(d.passwordConfigured),
           fromName: strField(d.fromName),
           fromEmail: strField(d.fromEmail),
         });
@@ -74,16 +76,18 @@ export default function AdminEmail() {
     }
     setSaving(true);
     try {
+      const passwordProvided = state.pass.length > 0;
       await api.put('/api/v1/admin/settings/email', {
         enabled: state.enabled,
         host: state.host.trim(),
         port: portNum,
         secure: state.secure,
         user: state.user.trim(),
-        pass: state.pass,
+        ...(passwordProvided ? { pass: state.pass } : {}),
         fromName: state.fromName.trim(),
         fromEmail: state.fromEmail.trim(),
       });
+      setState((prev) => ({ ...prev, pass: '', passwordConfigured: prev.passwordConfigured || passwordProvided }));
       toast.success('تنظیمات ایمیل ذخیره شد.');
     } catch (err) {
       toast.error(errText(err, 'ذخیرهٔ تنظیمات ایمیل ناموفق بود.'));
@@ -146,7 +150,7 @@ export default function AdminEmail() {
           <Field label="نام کاربری سرور ارسال">
             <Input dir="ltr" style={{ textAlign: 'left' }} value={state.user} onChange={(e) => setState((prev) => ({ ...prev, user: e.target.value }))} autoComplete="off" />
           </Field>
-          <Field label="رمز عبور سرور ارسال">
+          <Field label="رمز عبور سرور ارسال" hint={state.passwordConfigured ? 'رمز قبلی ذخیره شده است؛ برای حفظ آن این فیلد را خالی بگذارید.' : 'رمز SMTP را وارد کنید.'}>
             <Input type="password" dir="ltr" style={{ textAlign: 'left' }} value={state.pass} onChange={(e) => setState((prev) => ({ ...prev, pass: e.target.value }))} autoComplete="new-password" />
           </Field>
         </div>
@@ -154,7 +158,7 @@ export default function AdminEmail() {
         <div className="adm-inline-row">
           <div>
             <div className="adm-inline-row__title">اتصال امن</div>
-            <div className="adm-inline-row__desc">برای پورت‌های ۴۶۵ و ۵۸۷ فعال بگذارید.</div>
+            <div className="adm-inline-row__desc">پورت ۴۶۵: SSL/TLS فعال. پورت ۵۸۷: SSL/TLS غیرفعال و STARTTLS اجباری.</div>
           </div>
           <Toggle checked={state.secure} onChange={(v) => setState((prev) => ({ ...prev, secure: v }))} label="اتصال امن" />
         </div>

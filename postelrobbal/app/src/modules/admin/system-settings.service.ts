@@ -238,7 +238,14 @@ export async function getEmailSettings(): Promise<EmailSettings> {
         if (typeof v === 'string') settings.user = v;
         break;
       case 'smtpPass':
-        if (typeof v === 'string') settings.pass = v;
+        if (typeof v === 'string') {
+          if (v.startsWith('v1.')) {
+            try { settings.pass = decryptSecret(v); } catch { settings.pass = ''; }
+          } else {
+            // Legacy value remains readable; every newly saved secret is encrypted.
+            settings.pass = v;
+          }
+        }
         break;
       case 'fromName':
         if (typeof v === 'string' && v.trim() !== '') settings.fromName = v;
@@ -249,6 +256,11 @@ export async function getEmailSettings(): Promise<EmailSettings> {
     }
   }
   return settings;
+}
+
+export async function getPublicEmailSettings(): Promise<Omit<EmailSettings, 'pass'> & { pass: ''; passwordConfigured: boolean }> {
+  const settings = await getEmailSettings();
+  return { ...settings, pass: '', passwordConfigured: Boolean(settings.pass) };
 }
 
 function ensureEmailStr(value: unknown, field: string, max: number): string {
@@ -293,8 +305,12 @@ export async function putEmailSettings(patch: EmailSettingsPatch): Promise<strin
     updated.push('smtpUser');
   }
   if (patch.pass !== undefined) {
-    await upsertSetting('smtpPass', ensureEmailStr(patch.pass, 'pass', 190));
-    updated.push('smtpPass');
+    const password = ensureEmailStr(patch.pass, 'pass', 190);
+    // Blank input means "preserve saved password"; non-empty secrets are encrypted.
+    if (password) {
+      await upsertSetting('smtpPass', encryptSecret(password));
+      updated.push('smtpPass');
+    }
   }
   if (patch.fromName !== undefined) {
     await upsertSetting('fromName', ensureEmailStr(patch.fromName, 'fromName', 80));
@@ -317,31 +333,33 @@ export async function putEmailSettings(patch: EmailSettingsPatch): Promise<strin
  */
 export async function sendTestEmail(actorId: string, to: string): Promise<{ ok: true; messageId: string }> {
   const settings = await getEmailSettings();
-  if (!settings.host || !settings.user) {
-    throw new AppError(ERR.VALIDATION('ابتدا تنظیمات SMTP را کامل و ذخیره کنید.'));
+  if (!settings.enabled || !settings.host || !settings.user || !settings.pass) {
+    throw new AppError(ERR.VALIDATION('ایمیل را فعال کنید و تنظیمات SMTP، نام کاربری و رمز عبور را کامل و ذخیره کنید.'));
   }
+  const secure = settings.port === 465 ? true : settings.port === 587 ? false : settings.secure;
   const transport = nodemailer.createTransport({
     host: settings.host,
     port: settings.port,
-    secure: settings.secure,
+    secure,
+    requireTLS: !secure,
     auth: { user: settings.user, pass: settings.pass },
+    tls: { minVersion: 'TLSv1.2' },
+    connectionTimeout: 20_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
   try {
     const info = await transport.sendMail({
-      from: `"${settings.fromName}" <${settings.fromEmail || settings.user}>`,
+      from: { name: settings.fromName, address: settings.fromEmail || settings.user },
       to,
       subject: 'ایمیل آزمایشی پُست‌یار',
-      html:
-        '<div dir="rtl" style="font-family:Vazirmatn,Tahoma,sans-serif;padding:24px;text-align:right;">' +
-        '<h2 style="margin:0 0 12px;">ایمیل آزمایشی پُست‌یار</h2>' +
-        '<p style="margin:0;color:#475569;">تنظیمات SMTP با موفقیت اعمال شد؛ اگر این ایمیل را می‌بینید، ارسال ایمیل پُست‌یار کار می‌کند.</p>' +
-        '</div>',
+      text: 'تنظیمات SMTP پُست‌یار با موفقیت آزموده شد. اگر این ایمیل را دریافت کرده‌اید، ارسال ایمیل فعال است.',
+      html: '<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><body dir="rtl" style="margin:0;background:#f1f5f9;font-family:Tahoma,Arial,sans-serif;padding:28px 10px;"><table role="presentation" width="100%" style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5eaf3;border-radius:16px;padding:28px;"><tr><td style="color:#172554;font-size:22px;font-weight:800;">پُست‌یار</td></tr><tr><td style="padding-top:20px;color:#172033;font-size:20px;font-weight:700;">ایمیل آزمایشی پُست‌یار</td></tr><tr><td style="padding-top:14px;color:#475569;font-size:15px;line-height:1.9;">تنظیمات SMTP با موفقیت آزموده شد. اگر این پیام را دریافت کرده‌اید، ارسال ایمیل پُست‌یار کار می‌کند.</td></tr></table></body></html>',
     });
     await audit({ action: 'admin.email_test', actorId, meta: { to } });
     return { ok: true, messageId: String(info.messageId ?? '') };
-  } catch (err) {
-    const detail = String((err as { response?: string }).response ?? (err as Error).message ?? 'SMTP_ERROR').slice(0, 200);
-    throw new AppError(ERR.VALIDATION(`ارسال ایمیل آزمایشی ناموفق بود: ${detail}`));
+  } catch {
+    throw new AppError(ERR.VALIDATION('ارسال ایمیل آزمایشی ناموفق بود. میزبان، پورت، نوع اتصال امن و اعتبارنامه‌های SMTP را بررسی کنید.'));
   } finally {
     transport.close();
   }

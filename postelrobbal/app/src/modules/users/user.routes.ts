@@ -11,6 +11,7 @@ import { audit } from '../../core/audit.js';
 import { parseWith } from '../../core/validation.js';
 import { deleteMedia, openMediaStream, uploadAvatarMedia } from '../media/media.service.js';
 import { AVATAR_CHARACTERS, type AvatarState } from './avatars.js';
+import { enqueueUserEmailNotice } from '../notifications/email-notifications.js';
 
 function auth(req: FastifyRequest): { id: string } {
   if (!req.user) throw new AppError(ERR.AUTH_REQUIRED());
@@ -226,6 +227,14 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
       await tx.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.userId, u.id));
     });
     await audit({ action: 'user.password_changed', actorId: u.id, subjectType: 'user', subjectId: u.id, ip: req.ip });
+    await enqueueUserEmailNotice(u.id, {
+      subject: 'رمز عبور پُست‌یار تغییر کرد',
+      preheader: 'رمز عبور حساب شما با موفقیت تغییر کرده است.',
+      title: 'تغییر رمز عبور ثبت شد',
+      paragraphs: ['رمز عبور حساب پُست‌یار شما تغییر کرده است. اگر این اقدام را شما انجام نداده‌اید، از پنل خارج شوید و فوراً با پشتیبانی تماس بگیرید.'],
+      buttonLabel: 'ورود به پنل پُست‌یار',
+      buttonPath: '/login',
+    }, 'password-changed:' + u.id + ':' + Date.now());
     // Re-issue a fresh session + CSRF secret for the current device
     const session = await createSession(u.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
     setSessionCookie(reply, session.token);

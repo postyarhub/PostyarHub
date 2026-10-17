@@ -4,6 +4,8 @@ import { createLogger } from '../core/logger.js';
 import { loadEnv } from '../config/env.js';
 import { notifyTenant, deliverChannelNotification, deletePasswordResetDeliveryToken, PASSWORD_RESET_DELIVERY_KEY_PREFIX } from '../modules/notifications/delivery.js';
 import { sendEmail } from '../providers/email/email.js';
+import { renderEmailTemplate, isEmailNotificationPayload } from '../providers/email/templates.js';
+import { dispatchEmailForBusinessEvent, isBusinessEmailEvent } from '../modules/notifications/email-notifications.js';
 
 /**
  * Notifications worker (§27): in-app rows are already written synchronously;
@@ -95,25 +97,24 @@ async function handlePasswordReset(job: Job): Promise<void> {
     return;
   }
 
-  if (!env.MAIL_HOST) {
-    // Honest v1 (OPERATIONS.md): no SMTP configured → no email, no fake success.
-    // The reset link is NOT logged; the user gets a generic in-app notice.
-    log.warn({ event: 'password_reset_email_skipped_no_smtp', tenantId }, 'password_reset_email_skipped_no_smtp');
-    await notifyTenant({
-      tenantId,
-      kind: 'PASSWORD_RESET',
-      titleFa: 'بازیابی رمز عبور',
-      bodyFa: 'درخواست بازیابی رمز عبور شما ثبت شد؛ اما سرویس‌دهندهٔ ایمیل فعال نیست. لطفاً با پشتیبانی تماس بگیرید.',
-    }).catch(() => undefined);
-    if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
-    return;
-  }
-
-  const resetUrl = `${env.APP_URL}/reset-password?token=${token}`;
+  const resetMessage = renderEmailTemplate({
+    subject: 'بازیابی رمز عبور پُست‌یار',
+    preheader: 'برای تعیین رمز عبور جدید از لینک امن زیر استفاده کنید.',
+    title: 'بازیابی رمز عبور',
+    greeting: 'سلام،',
+    paragraphs: [
+      'برای تعیین رمز عبور جدید، دکمهٔ زیر را انتخاب کنید. این لینک فقط ۳۰ دقیقه اعتبار دارد و یک‌بار قابل استفاده است.',
+      'اگر این درخواست را شما انجام نداده‌اید، این پیام را نادیده بگیرید.',
+    ],
+    buttonLabel: 'تعیین رمز عبور جدید',
+    buttonPath: '/reset-password?token=' + encodeURIComponent(token),
+    footerNote: 'لینک بازیابی را با هیچ‌کس به اشتراک نگذارید.',
+  }, env.APP_URL);
   const result = await sendEmail({
     to: email,
     subject: 'بازیابی رمز عبور پُست‌یار',
-    text: `سلام,\n\nبرای بازیابی رمز عبور خود در پُست‌یار، روی لینک زیر کلیک کنید (اعتبار: ۳۰ دقیقه):\n${resetUrl}\n\nاگر این درخواست را شما انجام نداده‌اید، این پیام را نادیده بگیرید.`,
+    text: resetMessage.text,
+    html: resetMessage.html,
   });
 
   if (!result.ok) {
@@ -125,7 +126,7 @@ async function handlePasswordReset(job: Job): Promise<void> {
       titleFa: 'بازیابی رمز عبور',
       bodyFa: 'ارسال راهنمای بازیابی رمز عبور ناموفق بود. لطفاً پس از چند دقیقه دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.',
     }).catch(() => undefined);
-    if (resetTokenId && result.reason !== 'NOT_CONFIGURED') {
+    if (resetTokenId && result.reason !== 'NOT_CONFIGURED' && result.reason !== 'DISABLED') {
       // Retain the short-lived token during BullMQ's bounded retries. Throwing
       // activates its configured retry/backoff policy; the opaque job payload
       // still contains no reset secret. Redis TTL is the final cleanup bound.
@@ -137,6 +138,33 @@ async function handlePasswordReset(job: Job): Promise<void> {
   if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
 }
 
+async function handleEmailNotification(job: Job): Promise<void> {
+  if (!isEmailNotificationPayload(job.data)) {
+    log.warn({ jobId: job.id }, 'email_notification_job_malformed');
+    throw new Error('MALFORMED_EMAIL_NOTIFICATION_JOB');
+  }
+  const rendered = renderEmailTemplate(job.data, loadEnv().APP_URL);
+  const result = await sendEmail({
+    to: job.data.to,
+    subject: job.data.subject,
+    text: rendered.text,
+    html: rendered.html,
+  });
+  if (!result.ok) {
+    log.warn({ jobId: job.id, reason: result.reason ?? 'UNKNOWN' }, 'email_notification_delivery_failed');
+    if (result.reason === 'DISABLED' || result.reason === 'NOT_CONFIGURED') return;
+    throw new Error('EMAIL_NOTIFICATION_DELIVERY_FAILED');
+  }
+}
+
+async function handleBusinessEmailEvent(job: Job): Promise<void> {
+  if (!isBusinessEmailEvent(job.data)) {
+    log.warn({ jobId: job.id }, 'business_email_event_malformed');
+    throw new Error('MALFORMED_BUSINESS_EMAIL_EVENT');
+  }
+  await dispatchEmailForBusinessEvent(job.data);
+}
+
 export function startNotificationWorker() {
   // createWorker's processor parameter resolves to `never` due to a broken
   // conditional type in queue/connection.ts — bridge it without losing typing.
@@ -146,6 +174,10 @@ export function startNotificationWorker() {
         await handleExpiryWarning(job);
       } else if (job.name === 'password-reset') {
         await handlePasswordReset(job);
+      } else if (job.name === 'email-notification') {
+        await handleEmailNotification(job);
+      } else if (job.name === 'business-email-event') {
+        await handleBusinessEmailEvent(job);
       } else {
         log.error({ jobName: job.name, jobId: job.id }, 'unknown_notification_job');
         throw new Error(`UNKNOWN_NOTIFICATION_JOB: ${job.name}`);
