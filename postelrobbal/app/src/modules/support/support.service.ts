@@ -5,6 +5,7 @@ import { AppError, ERR } from '../../core/errors.js';
 import { newId } from '../../core/ids.js';
 import { hashPassword, passwordPolicyOk } from '../../security/passwords.js';
 import { notifyTenant } from '../notifications/delivery.js';
+import { notifyTicketEmail } from '../notifications/email-notifications.js';
 
 export type ActorRole = 'SUPER_ADMIN' | 'SUPPORT' | 'USER';
 export type TicketState = 'OPEN' | 'ANSWERED' | 'CLOSED';
@@ -153,6 +154,7 @@ export async function createTicket(
       });
     }
   });
+  await notifyTicketEmail({ kind: 'created', ticketId: id, messageId });
   return { id };
 }
 
@@ -309,6 +311,11 @@ export async function addTicketMessage(
         }
       : null,
   };
+  await notifyTicketEmail({
+    kind: isSupport ? 'staff-reply' : 'user-reply',
+    ticketId: ticket.id,
+    messageId,
+  });
   return { state: nextState, message };
 }
 
@@ -536,6 +543,7 @@ export async function adminAddTicketMessage(
     // Explicit bump (the column also auto-updates on write) + ANSWERED state.
     await tx.update(tickets).set({ state: 'ANSWERED', updatedAt: new Date() }).where(eq(tickets.id, ticket.id));
   });
+  await notifyTicketEmail({ kind: 'staff-reply', ticketId: ticket.id, messageId });
   return { ok: true };
 }
 
@@ -593,6 +601,7 @@ export async function adminCreateTicket(
     titleFa: 'تیکت جدید از سمت پشتیبانی',
     bodyFa: `تیکت «${input.subject.trim().slice(0, 120)}» توسط پشتیبانی برای شما ثبت شد و پیامی برایتان دارد.`,
   });
+  await notifyTicketEmail({ kind: 'staff-created', ticketId: id, messageId });
   return { id };
 }
 
