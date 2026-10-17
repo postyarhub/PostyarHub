@@ -146,4 +146,34 @@ describe('Telegram media delivery payload', () => {
     })).rejects.toMatchObject({ providerClass: 'VALIDATION' });
     expect(httpJsonMock).not.toHaveBeenCalled();
   });
+  it('sends 2–10 photos through the official sendMediaGroup endpoint with attached binary files', async () => {
+    httpMultipartJsonMock.mockResolvedValue({
+      status: 200,
+      data: { ok: true, result: [{ message_id: 456 }, { message_id: 457 }] },
+    });
+    const adapter = new TelegramAdapter();
+    const result = await adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: 'آلبوم',
+      media: [
+        { buffer: Buffer.from('photo-one'), filename: 'one.jpg', mime: 'image/jpeg' },
+        { buffer: Buffer.from('photo-two'), filename: 'two.jpg', mime: 'image/jpeg' },
+      ],
+    });
+
+    expect(result.messageId).toBe('456');
+    const [url, fields, files] = httpMultipartJsonMock.mock.calls[0] as [
+      string, Record<string, string>, Array<{ fieldName: string; filename: string; data: Buffer }>
+    ];
+    expect(url).toContain('/sendMediaGroup');
+    const media = JSON.parse(fields.media ?? '[]') as Array<{ type: string; media: string; caption?: string }>;
+    expect(media).toEqual([
+      { type: 'photo', media: 'attach://file0', caption: 'آلبوم' },
+      { type: 'photo', media: 'attach://file1' },
+    ]);
+    expect(files.map((file) => [file.fieldName, file.filename])).toEqual([
+      ['file0', 'one.jpg'], ['file1', 'two.jpg'],
+    ]);
+  });
+
 });
