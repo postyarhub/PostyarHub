@@ -92,6 +92,7 @@ const createPostSchema = z.object({
   body: z.string().max(4000).optional(),
   parseMode: z.enum(['NONE', 'HTML', 'MARKDOWN']).optional(),
   mediaId: z.string().min(10).max(26).optional(),
+  mediaIds: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/)).max(10).optional(),
   buttons: buttonsSchema.optional(),
 });
 
@@ -106,6 +107,7 @@ const updateScheduledPostSchema = z.object({
   body: z.string().max(4000),
   parseMode: z.enum(['NONE', 'HTML', 'MARKDOWN']).optional(),
   mediaId: z.string().regex(/^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/).nullable(),
+  mediaIds: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/)).max(10).optional(),
   buttons: buttonsSchema.nullable(),
   channelIds: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/)).min(1).max(20),
   scheduledAt: z.coerce.date(),

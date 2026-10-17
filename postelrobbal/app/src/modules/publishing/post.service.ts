@@ -34,6 +34,8 @@ export interface CreatePostInput {
   title?: string;
   body?: string;
   parseMode?: ParseMode;
+  /** Ordered media collection; mediaId is retained as a legacy fallback. */
+  mediaIds?: string[];
   mediaId?: string;
   buttons?: PostButtons;
   source?: 'MANUAL' | 'WORDPRESS';
@@ -52,6 +54,7 @@ export interface UpdateScheduledPostInput {
   body: string;
   parseMode?: ParseMode;
   mediaId: string | null;
+  mediaIds?: string[];
   buttons?: PostButtons | null;
   channelIds: string[];
   scheduledAt: Date;
@@ -139,6 +142,41 @@ async function resolveActiveChannels(tenantId: string, channelIds: string[]): Pr
   return unique;
 }
 
+async function resolvePostMediaIds(
+  tenantId: string,
+  requestedMediaIds: string[] | undefined,
+  legacyMediaId: string | null | undefined,
+): Promise<{ mediaIds: string[]; mediaId: string | null }> {
+  const requested = requestedMediaIds !== undefined
+    ? requestedMediaIds
+    : legacyMediaId ? [legacyMediaId] : [];
+  const mediaIds = [...new Set(requested)];
+  if (mediaIds.length > 10) {
+    throw new AppError(ERR.VALIDATION('برای هر پست حداکثر ۱۰ تصویر قابل انتخاب است.'));
+  }
+  if (mediaIds.length === 0) return { mediaIds: [], mediaId: null };
+
+  const rows = await getDb()
+    .select({ id: media.id, mime: media.mime, sizeBytes: media.sizeBytes })
+    .from(media)
+    .where(and(eq(media.tenantId, tenantId), inArray(media.id, mediaIds)));
+  if (rows.length !== mediaIds.length) {
+    throw new AppError(ERR.VALIDATION('یکی از رسانه‌های انتخاب‌شده معتبر نیست یا به حساب شما تعلق ندارد.'));
+  }
+  const totalStoredBytes = rows.reduce((sum, row) => sum + row.sizeBytes, 0);
+  if (totalStoredBytes > 20 * 1024 * 1024) {
+    throw new AppError(ERR.VALIDATION('حجم مجموع تصاویر یک پست نباید بیشتر از ۲۰ مگابایت باشد.'));
+  }
+  const videos = rows.filter((row) => row.mime === 'video/mp4');
+  if (rows.some((row) => !(row.mime.startsWith('image/') || row.mime === 'video/mp4'))) {
+    throw new AppError(ERR.VALIDATION('برای انتشار فقط تصویر یا ویدئوی MP4 قابل استفاده است.'));
+  }
+  if (videos.length > 0 && (videos.length !== 1 || mediaIds.length !== 1)) {
+    throw new AppError(ERR.VALIDATION('ویدئو را باید به‌تنهایی ارسال کنید؛ در یک پست نمی‌توان ویدئو را با تصاویر ترکیب کرد.'));
+  }
+  return { mediaIds, mediaId: mediaIds[0] ?? null };
+}
+
 function ensurePublishableState(state: string): void {
   if (state === 'QUEUED' || state === 'PUBLISHING') {
     throw new AppError(ERR.VALIDATION('این پست در حال انتشار است و امکان تغییر آن نیست.'));
@@ -153,22 +191,11 @@ export async function createPost(tenantId: string, input: CreatePostInput, meta:
   }
   assertFooterLengths(body, input.buttons);
 
-  let mediaId: string | null = null;
-  if (!body && !input.mediaId) {
+  const resolvedMedia = await resolvePostMediaIds(tenantId, input.mediaIds, input.mediaId);
+  const mediaIds = resolvedMedia.mediaIds;
+  const mediaId = resolvedMedia.mediaId;
+  if (!body && mediaIds.length === 0) {
     throw new AppError(ERR.VALIDATION('پست باید حداقل متن یا رسانه داشته باشد.'));
-  }
-
-  if (input.mediaId) {
-    const [m] = await db
-      .select({ id: media.id, mime: media.mime })
-      .from(media)
-      .where(and(eq(media.id, input.mediaId), eq(media.tenantId, tenantId)))
-      .limit(1);
-    if (!m) throw new AppError(ERR.VALIDATION('رسانهٔ انتخاب‌شده معتبر نیست.'));
-    if (!(m.mime.startsWith('image/') || m.mime === 'video/mp4')) {
-      throw new AppError(ERR.VALIDATION('برای انتشار پست فقط تصویر یا ویدئوی MP4 قابل استفاده است.'));
-    }
-    mediaId = m.id;
   }
 
   const destinationSettingChannelIds = [...new Set([
@@ -193,12 +220,13 @@ export async function createPost(tenantId: string, input: CreatePostInput, meta:
     body,
     parseMode: input.parseMode ?? 'NONE',
     mediaId,
+    mediaIds: mediaIds.length ? mediaIds : null,
     buttonsJson: input.buttons ?? null,
     source: input.source ?? 'MANUAL',
     state: 'DRAFT',
   });
   const post = await requireOwnedPost(tenantId, id);
-  await emitEvent({ name: 'post.created', tenantId, subjectType: 'post', subjectId: id, props: { hasMedia: mediaId !== null } });
+  await emitEvent({ name: 'post.created', tenantId, subjectType: 'post', subjectId: id, props: { hasMedia: mediaIds.length > 0, mediaCount: mediaIds.length } });
   await audit({
     action: 'post.create',
     actorId: meta.actorId ?? null,
@@ -388,23 +416,13 @@ export async function updateScheduledPost(
     throw new AppError(ERR.VALIDATION('زمان انتشار باید در آینده باشد.'));
   }
 
-  const mediaId = input.mediaId ?? null;
-  if (!body && !mediaId) {
+  const resolvedMedia = await resolvePostMediaIds(tenantId, input.mediaIds, input.mediaId);
+  const mediaIds = resolvedMedia.mediaIds;
+  const mediaId = resolvedMedia.mediaId;
+  if (!body && mediaIds.length === 0) {
     throw new AppError(ERR.VALIDATION('پست باید حداقل متن یا رسانه داشته باشد.'));
   }
   assertFooterLengths(body, input.buttons);
-
-  if (mediaId) {
-    const [m] = await db
-      .select({ id: media.id, mime: media.mime })
-      .from(media)
-      .where(and(eq(media.id, mediaId), eq(media.tenantId, tenantId)))
-      .limit(1);
-    if (!m) throw new AppError(ERR.VALIDATION('رسانهٔ انتخاب‌شده معتبر نیست.'));
-    if (!(m.mime.startsWith('image/') || m.mime === 'video/mp4')) {
-      throw new AppError(ERR.VALIDATION('برای انتشار پست فقط تصویر یا ویدئوی MP4 قابل استفاده است.'));
-    }
-  }
 
   const uniqueChannels = await resolveActiveChannels(tenantId, input.channelIds);
   const selectedChannelSet = new Set(uniqueChannels);
@@ -464,6 +482,7 @@ export async function updateScheduledPost(
         body,
         parseMode: input.parseMode ?? 'NONE',
         mediaId,
+        mediaIds: mediaIds.length ? mediaIds : null,
         buttonsJson: input.buttons ?? null,
         scheduledAt: requestedTime,
       })
@@ -635,16 +654,29 @@ export async function listPosts(tenantId: string, query: PostListQuery): Promise
 export async function getPost(
   tenantId: string,
   postId: string
-): Promise<{ post: typeof posts.$inferSelect; targets: TargetView[]; media: { id: string; filename: string; mime: string; sizeBytes: number } | null }> {
+): Promise<{
+  post: typeof posts.$inferSelect;
+  targets: TargetView[];
+  /** Legacy single-media view retained for older clients. */
+  media: { id: string; filename: string; mime: string; sizeBytes: number } | null;
+  mediaItems: Array<{ id: string; filename: string; mime: string; sizeBytes: number }>;
+}> {
   const db = getDb();
   const post = await requireOwnedPost(tenantId, postId);
-  const [mediaInfo] = post.mediaId
+  const requestedMediaIds = Array.isArray(post.mediaIds) && post.mediaIds.length
+    ? post.mediaIds
+    : post.mediaId ? [post.mediaId] : [];
+  const mediaRows = requestedMediaIds.length
     ? await db
         .select({ id: media.id, filename: media.filename, mime: media.mime, sizeBytes: media.sizeBytes })
         .from(media)
-        .where(and(eq(media.id, post.mediaId), eq(media.tenantId, tenantId)))
-        .limit(1)
+        .where(and(eq(media.tenantId, tenantId), inArray(media.id, requestedMediaIds)))
     : [];
+  const mediaById = new Map(mediaRows.map((item) => [item.id, item]));
+  const mediaItems = requestedMediaIds.map((id) => mediaById.get(id)).filter(
+    (item): item is NonNullable<typeof item> => Boolean(item),
+  );
+  const mediaInfo = mediaItems[0] ?? null;
   const targets = await db
     .select({
       id: postTargets.id,
@@ -664,7 +696,7 @@ export async function getPost(
     .innerJoin(channels, eq(channels.id, postTargets.channelId))
     .where(eq(postTargets.postId, post.id))
     .orderBy(postTargets.createdAt);
-  return { post, targets, media: mediaInfo ?? null };
+  return { post, targets, media: mediaInfo, mediaItems };
 }
 
 export async function cancelPost(tenantId: string, postId: string, meta: ActorMeta = {}): Promise<typeof posts.$inferSelect> {

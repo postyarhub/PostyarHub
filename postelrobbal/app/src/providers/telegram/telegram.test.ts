@@ -58,6 +58,50 @@ describe('Telegram media delivery payload', () => {
     expect(markup.inline_keyboard).toEqual([[{ text: 'سایت', url: 'https://example.com' }, { text: 'تلگرام', url: 'https://t.me/example' }], [{ text: 'روبیکا', url: 'https://rubika.ir/example' }]]);
   });
 
+  it('sends two photos as one official media-group request', async () => {
+    httpMultipartJsonMock.mockResolvedValueOnce({
+      status: 200,
+      data: { ok: true, result: [{ message_id: 901 }, { message_id: 902 }] },
+    });
+    const adapter = new TelegramAdapter();
+    const result = await adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: 'album caption',
+      parseMode: 'NONE',
+      media: [
+        { buffer: Buffer.from('first-photo'), filename: 'first.jpg', mime: 'image/jpeg' },
+        { buffer: Buffer.from('second-photo'), filename: 'second.jpg', mime: 'image/jpeg' },
+      ],
+    });
+
+    expect(result).toEqual({ ok: true, messageId: '901' });
+    const [url, fields, files] = httpMultipartJsonMock.mock.calls[0] as [
+      string,
+      Record<string, string>,
+      Array<{ fieldName: string; filename: string; contentType: string; data: Buffer }>,
+    ];
+    expect(url).toMatch(/\/sendMediaGroup$/);
+    const media = JSON.parse(fields.media ?? '[]') as Array<Record<string, unknown>>;
+    expect(media).toEqual([
+      { type: 'photo', media: 'attach://file0', caption: 'album caption' },
+      { type: 'photo', media: 'attach://file1' },
+    ]);
+    expect(files.map((file) => ({ fieldName: file.fieldName, filename: file.filename }))).toEqual([
+      { fieldName: 'file0', filename: 'first.jpg' },
+      { fieldName: 'file1', filename: 'second.jpg' },
+    ]);
+  });
+
+  it('rejects media groups outside the documented 2–10 photo range', async () => {
+    const adapter = new TelegramAdapter();
+    await expect(adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: '',
+      media: [{ buffer: Buffer.from('only-photo'), filename: 'only.jpg', mime: 'image/jpeg' }],
+    })).rejects.toMatchObject({ providerClass: 'VALIDATION' });
+    expect(httpMultipartJsonMock).not.toHaveBeenCalled();
+  });
+
   it('rejects an unsupported button scheme before provider send', async () => {
     const adapter = new TelegramAdapter();
     await expect(adapter.sendText('TOKEN', {

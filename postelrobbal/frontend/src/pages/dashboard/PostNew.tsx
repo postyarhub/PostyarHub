@@ -55,10 +55,12 @@ type EditablePostResponse = {
     source: string;
     scheduledAt: string | null;
     mediaId: string | null;
+    mediaIds?: string[] | null;
     buttonsJson: EditablePostButtons;
   };
   targets: Array<{ channelId: string; state: string }>;
   media: MediaDto | null;
+  mediaItems?: MediaDto[];
 };
 
 function errText(e: unknown): string {
@@ -114,8 +116,8 @@ export default function PostNew() {
   const [editHydrated, setEditHydrated] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
 
-  const [media, setMedia] = useState<MediaDto | null>(null);
-  const [previewUrl, setPreviewUrl] = useState('');
+  const [mediaItems, setMediaItems] = useState<MediaDto[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
 
   const [buttonsByChannel, setButtonsByChannel] = useState<Record<string, ButtonRow[]>>({});
@@ -176,8 +178,12 @@ export default function PostNew() {
           return;
         }
 
-        if (post.mediaId && !data.media) {
-          toast.error('رسانهٔ متصل به این پست قابل بازیابی نیست؛ برای جلوگیری از حذف ناخواستهٔ رسانه، ویرایش باز نشد.');
+        const hydratedMedia = data.mediaItems?.length ? data.mediaItems : data.media ? [data.media] : [];
+        const expectedMediaIds = Array.isArray(post.mediaIds) && post.mediaIds.length
+          ? post.mediaIds
+          : post.mediaId ? [post.mediaId] : [];
+        if (expectedMediaIds.length !== hydratedMedia.length || expectedMediaIds.some((mediaId) => !hydratedMedia.some((item) => item.id === mediaId))) {
+          toast.error('رسانه‌های متصل به این پست کامل بازیابی نشدند؛ برای جلوگیری از حذف ناخواسته، ویرایش باز نشد.');
           navigate(`/dashboard/posts/${editPostId}`, { replace: true });
           return;
         }
@@ -226,17 +232,20 @@ export default function PostNew() {
         setButtonsByChannel(nextButtons);
         setFooterTextByChannel({ ...(buttons?.footerByChannel ?? {}) });
         setScheduledAt(scheduledTime);
-        setMedia(data.media ?? null);
-        setPreviewUrl('');
-        if (data.media?.mime.startsWith('image/')) {
+        setMediaItems(hydratedMedia);
+        const nextPreviewUrls: Record<string, string> = {};
+        await Promise.all(hydratedMedia.filter((item) => item.mime.startsWith('image/')).map(async (item) => {
           try {
-            const access = await api.get<{ url: string }>(`/api/v1/media/${data.media.id}/token`);
-            if (!cancelled) setPreviewUrl(access.url);
+            const access = await api.get<{ url: string }>(`/api/v1/media/${item.id}/token`);
+            nextPreviewUrls[item.id] = access.url;
           } catch {
-            // Preview is optional; preserve the attached media even if preview token fails.
+            // Preview is optional; preserve the attached media even if token retrieval fails.
           }
+        }));
+        if (!cancelled) {
+          setPreviewUrls(nextPreviewUrls);
+          setEditHydrated(true);
         }
-        if (!cancelled) setEditHydrated(true);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -264,36 +273,74 @@ export default function PostNew() {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
-  const onFilePicked = async (file: File | undefined) => {
-    if (!file) return;
+  const onFilesPicked = async (files: File[]) => {
+    if (files.length === 0) return;
+    const MAX_MEDIA_COUNT = 10;
+    const MAX_MEDIA_FILE_BYTES = 8 * 1024 * 1024;
+    const MAX_MEDIA_TOTAL_BYTES = 20 * 1024 * 1024;
+    if (files.length + mediaItems.length > MAX_MEDIA_COUNT) {
+      toast.error('برای هر پست حداکثر ۱۰ تصویر قابل انتخاب است.');
+      return;
+    }
+    if (files.some((file) => file.size <= 0 || file.size > MAX_MEDIA_FILE_BYTES)) {
+      toast.error('حجم هر فایل باید بیشتر از صفر و حداکثر ۸ مگابایت باشد.');
+      return;
+    }
+    const hasExistingVideo = mediaItems.some((item) => item.mime === 'video/mp4');
+    const hasNewVideo = files.some((file) => file.type === 'video/mp4');
+    const hasNewNonImage = files.some((file) => !file.type.startsWith('image/') && file.type !== 'video/mp4');
+    if (hasNewNonImage || (hasNewVideo && (files.length !== 1 || mediaItems.length > 0)) || (hasExistingVideo && files.length > 0)) {
+      toast.error('یک ویدئوی MP4 باید به‌تنهایی انتخاب شود؛ ارسال همزمان چند فایل فقط برای تصاویر است.');
+      return;
+    }
+    const existingSize = mediaItems.reduce((sum, item) => sum + item.sizeBytes, 0);
+    if (existingSize + files.reduce((sum, file) => sum + file.size, 0) > MAX_MEDIA_TOTAL_BYTES) {
+      toast.error('حجم مجموع رسانه‌های یک پست نباید بیشتر از ۲۰ مگابایت باشد.');
+      return;
+    }
     setUploading(true);
-    try {
-      const m = await uploadMedia(file);
-      if (!m) {
-        toast.error('بارگذاری رسانه ناموفق بود.');
-        return;
-      }
-      setMedia(m);
-      setPreviewUrl('');
-      if (m.mime.startsWith('image/')) {
+    const uploaded: MediaDto[] = [];
+    const refreshPreviews = async (items: MediaDto[]) => {
+      const nextPreviews: Record<string, string> = {};
+      await Promise.all(items.filter((item) => item.mime.startsWith('image/')).map(async (item) => {
         try {
-          const access = await api.get<{ url: string }>(`/api/v1/media/${m.id}/token`);
-          setPreviewUrl(access.url);
+          const access = await api.get<{ url: string }>(`/api/v1/media/${item.id}/token`);
+          nextPreviews[item.id] = access.url;
         } catch {
-          // preview is best-effort; the media itself stays attached
+          // Preview is optional; uploaded media remains attached.
         }
+      }));
+      setPreviewUrls((current) => ({ ...current, ...nextPreviews }));
+    };
+    try {
+      for (const file of files) {
+        const item = await uploadMedia(file);
+        if (!item) throw new ApiRequestError('MEDIA_UPLOAD_FAILED', 'بارگذاری یکی از فایل‌ها ناموفق بود.', 422);
+        uploaded.push(item);
       }
-      toast.success('رسانه پیوست شد.');
-    } catch (e) {
-      toast.error(errText(e));
+      setMediaItems((current) => [...current, ...uploaded]);
+      await refreshPreviews(uploaded);
+      toast.success(`${faNumber(uploaded.length)} رسانه پیوست شد.`);
+    } catch (error) {
+      if (uploaded.length > 0) {
+        setMediaItems((current) => [...current, ...uploaded]);
+        await refreshPreviews(uploaded);
+        toast.error(`${faNumber(uploaded.length)} فایل از ${faNumber(files.length)} فایل بارگذاری شد؛ بقیه ناموفق بود. ${errText(error)}`);
+      } else {
+        toast.error(errText(error));
+      }
     } finally {
       setUploading(false);
     }
   };
 
-  const removeMedia = () => {
-    setMedia(null);
-    setPreviewUrl('');
+  const removeMedia = (mediaId: string) => {
+    setMediaItems((current) => current.filter((item) => item.id !== mediaId));
+    setPreviewUrls((current) => {
+      const next = { ...current };
+      delete next[mediaId];
+      return next;
+    });
   };
 
   const validateRows = (): boolean => {
@@ -329,7 +376,9 @@ export default function PostNew() {
     const payload: Record<string, unknown> = { body: body.trim(), parseMode };
     if (title.trim()) payload.title = title.trim();
     else if (forUpdate) payload.title = null;
-    if (media) payload.mediaId = media.id;
+    const selectedMediaIds = mediaItems.map((item) => item.id);
+    payload.mediaIds = selectedMediaIds;
+    if (selectedMediaIds.length > 0) payload.mediaId = selectedMediaIds[0];
     else if (forUpdate) payload.mediaId = null;
     const byChannel = selectedChannels.reduce<Record<string, Array<{ label: string; target: { type: ButtonRow['targetType']; value: string } }>>>((acc, channel) => {
       const rows = (buttonsByChannel[channel.id] ?? [])
@@ -349,7 +398,7 @@ export default function PostNew() {
     if (Object.keys(buttonsPayload).length > 0) payload.buttons = buttonsPayload;
     else if (forUpdate) payload.buttons = null;
     return payload;
-  }, [body, parseMode, title, media, selectedChannels, buttonsByChannel, footerTextByChannel]);
+  }, [body, parseMode, title, mediaItems, selectedChannels, buttonsByChannel, footerTextByChannel]);
 
   const buildWebsitePayload = async (item: WebsiteDraftItem): Promise<Record<string, unknown>> => {
     const payload = buildPayload();
@@ -361,6 +410,7 @@ export default function PostNew() {
     // provider. Import the database-owned source image into private Postyar
     // media first, then use the normal delivery worker's mediaId path.
     delete payload.mediaId;
+    delete payload.mediaIds;
     if (item.imageUrl.trim()) {
       const imported = await api.post<{ media: MediaDto }>('/api/v1/wordpress/import-featured-image', {
         siteId: item.siteId,
@@ -369,6 +419,7 @@ export default function PostNew() {
       });
       if (!imported.media?.id) throw new ApiRequestError('MEDIA_IMPORT_FAILED', `دریافت تصویر شاخص «${item.title || 'محتوای انتخاب‌شده'}» کامل نشد.`, 422);
       payload.mediaId = imported.media.id;
+      payload.mediaIds = [imported.media.id];
     }
     const currentButtons = (payload.buttons && typeof payload.buttons === 'object' ? payload.buttons : {}) as { byChannel?: Record<string, Array<{ label: string; target: { type: string; value: string } }>>; footerByChannel?: Record<string, string> };
     const byChannel = { ...(currentButtons.byChannel ?? {}) };
@@ -395,7 +446,7 @@ export default function PostNew() {
   }, [buildPayload]);
 
   const guard = (): boolean => {
-    if (websiteDraftItems.length === 0 && body.trim() === '' && !media) {
+    if (websiteDraftItems.length === 0 && body.trim() === '' && mediaItems.length === 0) {
       toast.error('پست باید حداقل متن یا رسانه داشته باشد؛ یا از بخش انتخاب محصول/مقاله محتوا انتخاب کنید.');
       return false;
     }
@@ -589,32 +640,42 @@ export default function PostNew() {
           />
         </Field>
 
-        <Field label="رسانه (تصویر یا ویدیو)" hint="حداکثر ۸ مگابایت — تصویر جی‌پی‌جی، پی‌ان‌جی، وب‌پی، گیف یا ویدیوی ام‌پی۴">
-          {media ? (
-            <div style={{ display: 'grid', gap: 8 }}>
-              {previewUrl && (
-                <img
-                  src={previewUrl}
-                  alt={`پیش‌نمایش ${media.filename}`}
-                  style={{ maxWidth: 260, maxHeight: 180, borderRadius: 10, border: '1px solid var(--border)' }}
-                />
-              )}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
-                <span dir="ltr" style={{ color: 'var(--text-2)' }}>{media.filename}</span>
-                <span style={{ color: 'var(--text-2)' }}>({faNumber(media.sizeBytes)} بایت)</span>
-                <Button size="sm" variant="ghost" onClick={removeMedia}>حذف رسانه</Button>
+        <Field label="رسانه (تصاویر یا یک ویدیو)" hint="حداکثر ۱۰ تصویر، ۸ مگابایت برای هر فایل و ۲۰ مگابایت برای مجموع رسانه‌ها؛ ویدیو باید به‌تنهایی باشد.">
+          {mediaItems.length > 0 && (
+            <div style={{ display: 'grid', gap: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(115px, 1fr))', gap: 10 }}>
+                {mediaItems.map((item, index) => (
+                  <div key={item.id} style={{ minWidth: 0, border: '1px solid var(--border)', borderRadius: 10, padding: 8, display: 'grid', gap: 6 }}>
+                    {previewUrls[item.id] ? (
+                      <img
+                        src={previewUrls[item.id]}
+                        alt={`پیش‌نمایش تصویر ${faNumber(index + 1)}`}
+                        style={{ width: '100%', height: 82, objectFit: 'cover', borderRadius: 6 }}
+                      />
+                    ) : (
+                      <div style={{ height: 82, display: 'grid', placeItems: 'center', borderRadius: 6, background: 'var(--surface-2, var(--border))', color: 'var(--text-2)', fontSize: 12 }}>
+                        {item.mime === 'video/mp4' ? 'ویدیو' : 'پیش‌نمایش در دسترس نیست'}
+                      </div>
+                    )}
+                    <span dir="ltr" style={{ color: 'var(--text-2)', fontSize: 12, overflowWrap: 'anywhere' }}>{item.filename}</span>
+                    <span style={{ color: 'var(--text-2)', fontSize: 11 }}>({faNumber(item.sizeBytes)} بایت)</span>
+                    <Button size="sm" variant="ghost" disabled={uploading} onClick={() => removeMedia(item.id)}>حذف</Button>
+                  </div>
+                ))}
               </div>
             </div>
-          ) : (
-            <label className="btn btn-ghost" style={{ justifyContent: 'center', cursor: uploading ? 'wait' : 'pointer' }}>
-              {uploading ? <Spinner /> : '📎 انتخاب فایل'}
+          )}
+          {mediaItems.length < 10 && !mediaItems.some((item) => item.mime === 'video/mp4') && (
+            <label className="btn btn-ghost" style={{ justifyContent: 'center', cursor: uploading ? 'wait' : 'pointer', marginTop: mediaItems.length ? 10 : 0 }}>
+              {uploading ? <Spinner /> : mediaItems.length ? 'افزودن تصویر' : '📎 انتخاب تصویر یا ویدیو'}
               <input
                 type="file"
-                accept="image/*,video/mp4"
+                accept={mediaItems.length ? 'image/*' : 'image/*,video/mp4'}
+                multiple
                 style={{ display: 'none' }}
                 disabled={uploading}
                 onChange={(e) => {
-                  void onFilePicked(e.target.files?.[0]);
+                  void onFilesPicked(Array.from(e.target.files ?? []));
                   e.target.value = '';
                 }}
               />
@@ -715,12 +776,12 @@ export default function PostNew() {
                         {(footerTextByChannel[channel.id] ?? '').trim()}
                       </div>
                     )}
-                    {media && (
+                    {mediaItems[0] && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 12 }}>
-                        {media.mime.startsWith('image/') && previewUrl
-                          ? <img src={previewUrl} alt={`پیش‌نمایش رسانه برای ${channel.title}`} style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6 }} />
-                          : <span aria-hidden="true">{media.mime.startsWith('video/') ? 'ویدیو' : 'رسانه'}</span>}
-                        <span style={{ overflowWrap: 'anywhere' }}>{media.filename}</span>
+                        {mediaItems[0].mime.startsWith('image/') && previewUrls[mediaItems[0].id]
+                          ? <img src={previewUrls[mediaItems[0].id]} alt={`پیش‌نمایش رسانه برای ${channel.title}`} style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6 }} />
+                          : <span aria-hidden="true">{mediaItems[0].mime.startsWith('video/') ? 'ویدیو' : 'رسانه'}</span>}
+                        <span style={{ overflowWrap: 'anywhere' }}>{mediaItems.length > 1 ? `${faNumber(mediaItems.length)} رسانه: ` : ''}{mediaItems[0].filename}</span>
                       </div>
                     )}
                     {channel.platform === 'rubika' && previewRows.length > 0 && (

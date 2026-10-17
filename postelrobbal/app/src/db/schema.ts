@@ -310,6 +310,8 @@ export const posts = mysqlTable('posts', {
   body: text('body').notNull(),
   parseMode: mysqlEnum('parse_mode', ['NONE', 'HTML', 'MARKDOWN']).notNull().default('NONE'),
   mediaId: char('media_id', { length: 26 }),
+  /** Ordered media collection; mediaId remains the legacy first-item pointer. */
+  mediaIds: json('media_ids_json').$type<string[]>(),
   buttonsJson: json('buttons_json').$type<PostButtons>(),
   source: mysqlEnum('source', ['MANUAL', 'GOLD', 'WORDPRESS', 'WORKFLOW']).notNull().default('MANUAL'),
   state: mysqlEnum('state', ['DRAFT', 'SCHEDULED', 'QUEUED', 'PUBLISHING', 'PUBLISHED', 'PARTIAL', 'FAILED', 'CANCELLED']).notNull().default('DRAFT'),

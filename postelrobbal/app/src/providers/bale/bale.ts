@@ -1,7 +1,7 @@
 import { httpJson, httpMultipartJson, HttpJsonParseError } from '../../core/http.js';
 import {
   ProviderAdapter, ProviderCapabilities, BotIdentity, SendResult,
-  SendTextInput, SendMediaInput, makeProviderError, mapHttpToProviderError,
+  SendTextInput, SendMediaInput, SendMediaGroupInput, makeProviderError, mapHttpToProviderError,
 } from '../types.js';
 
 /**
@@ -200,6 +200,54 @@ export class BaleAdapter implements ProviderAdapter {
       throw makeProviderError('UNKNOWN', 'پاسخ بله شناسهٔ پیام معتبر برنگرداند.');
     }
     return { ok: true, messageId: String(res.message_id) };
+  }
+
+  async sendMediaGroup(token: string, input: SendMediaGroupInput): Promise<SendResult> {
+    if (input.media.length < 2 || input.media.length > 10) {
+      throw makeProviderError('VALIDATION', 'برای ارسال آلبوم باید بین ۲ تا ۱۰ تصویر انتخاب شود.');
+    }
+    if (input.text.length > 1024) {
+      throw makeProviderError('VALIDATION', 'متن همراه آلبوم حداکثر ۱۰۲۴ نویسه است.');
+    }
+    const chatId = await resolveChatId(token, input.chatRef);
+    const media = input.media.map((item, index) => ({
+      type: 'photo',
+      media: `attach://file${index}`,
+      ...(index === 0 && input.text ? { caption: input.text } : {}),
+      ...(index === 0 && input.parseMode === 'HTML' ? { parse_mode: 'HTML' } : {}),
+      ...(index === 0 && input.parseMode === 'MARKDOWN' ? { parse_mode: 'MarkdownV2' } : {}),
+    }));
+    const fields = {
+      chat_id: String(chatId),
+      media: JSON.stringify(media),
+    };
+    const files = input.media.map((item, index) => ({
+      fieldName: `file${index}`,
+      filename: item.filename,
+      contentType: item.mime || 'image/jpeg',
+      data: item.buffer,
+    }));
+    const { status, data } = await httpMultipartJson<BaleResponse<Array<{ message_id: number }>>>(`${BASE}/bot${token}/sendMediaGroup`, fields, files, 30_000).catch((err) => {
+        if (err && typeof err === 'object' && 'providerClass' in err && 'userMessageFa' in err) throw err;
+        if (err instanceof HttpJsonParseError) {
+          throw mapHttpToProviderError(err.status, `HTTP ${err.status} ${err.contentType || ''}`, err);
+        }
+        throw makeProviderError('TRANSIENT', 'پلتفرم موقتاً در دسترس نیست؛ تلاش مجدد انجام می‌شود.', err);
+    });
+    if (!data.ok || !Array.isArray(data.result) || data.result.length !== input.media.length) {
+      const description = data.description ?? `HTTP ${status}`;
+      const error = mapHttpToProviderError(data.error_code ?? status, description, new Error(description));
+      const retryAfterSeconds = data.parameters?.retry_after;
+      if (Number.isFinite(retryAfterSeconds) && (retryAfterSeconds ?? 0) > 0) {
+        error.retryAfterMs = Math.min(3_600_000, Math.ceil((retryAfterSeconds as number) * 1000));
+      }
+      throw error;
+    }
+    const firstMessageId = data.result[0]?.message_id;
+    if (!Number.isInteger(firstMessageId) || (firstMessageId ?? 0) <= 0) {
+      throw makeProviderError('UNKNOWN', 'پاسخ پلتفرم شناسهٔ پیام معتبر برای آلبوم برنگرداند.');
+    }
+    return { ok: true, messageId: String(firstMessageId) };
   }
 
   async editMessageCaption(token: string, chatRef: string, messageId: string, caption: string): Promise<void> {
