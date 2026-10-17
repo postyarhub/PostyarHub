@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
-import { Button, Card, Field, PageLoading, useToast } from '../../components/ui';
+import { Button, Card, Field, PageLoading } from '../../components/ui';
+import { useToast } from '../../lib/toast';
 
 type TemplateKey =
   | 'registration'
@@ -73,7 +74,7 @@ const TEMPLATE_META: Array<{
     subject: 'رسید شارژ کیف پول پُست‌یار',
     title: 'شارژ کیف پول موفق بود',
     greeting: 'سلام کاربر گرامی،',
-    paragraphs: 'شارژ کیف پول پُست‌یار با موفقیت ثبت شد.\n{{paragraphs}}',
+    paragraphs: 'شارژ کیف پول پُست‌یار با موفقیت ثبت شد. این ایمیل رسید اطلاع‌رسانی عملیات است.',
     buttonLabel: 'مشاهده کیف پول',
   },
   {
@@ -93,7 +94,7 @@ const TEMPLATE_META: Array<{
     subject: 'به‌روزرسانی اشتراک | پُست‌یار',
     title: 'وضعیت اشتراک شما به‌روزرسانی شد',
     greeting: 'سلام کاربر گرامی،',
-    paragraphs: '{{paragraphs}}',
+    paragraphs: 'اشتراک شما با موفقیت فعال شد. وضعیت و تاریخ پایان اشتراک را از پنل بررسی کنید.',
     buttonLabel: 'مشاهده اشتراک',
   },
   {
@@ -143,7 +144,7 @@ const TEMPLATE_META: Array<{
     subject: 'اطلاع‌رسانی از پُست‌یار',
     title: 'اطلاع‌رسانی',
     greeting: 'سلام،',
-    paragraphs: '{{paragraphs}}',
+    paragraphs: 'اطلاع‌رسانی تازه‌ای در پنل پُست‌یار برای شما ثبت شده است.',
     buttonLabel: 'ورود به پنل پُست‌یار',
   },
 ];
