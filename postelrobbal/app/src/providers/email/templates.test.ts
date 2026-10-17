@@ -26,7 +26,7 @@ describe('Postyar email template', () => {
       title: 'عنوان',
       paragraphs: ['متن پیام'],
     }, 'https://postyarhub.ir');
-    expect(rendered.html).toContain('https://postyarhub.ir/icons/icon-512x512.png');
+    expect(rendered.html).toContain('https://postyarhub.ir/email-assets/postyar-logo-mark.webp');
     expect(rendered.html).toContain('Vazirmatn-Regular.woff2');
     expect(rendered.html).toContain('font-family:Vazirmatn');
     expect(rendered.subject).toBe('موضوع');
