@@ -77,7 +77,16 @@ export default function PostDetail() {
         mediaItems?: PostMediaDto[];
       }>(`/api/v1/posts/${id}`);
       setPost(data.post);
-      setMediaItems(data.mediaItems?.length ? data.mediaItems : data.media ? [data.media] : []);
+      const nextMediaItems = data.mediaItems?.length ? data.mediaItems : data.media ? [data.media] : [];
+      setMediaItems((current) => (
+        current.length === nextMediaItems.length &&
+        current.every((item, index) => {
+          const next = nextMediaItems[index];
+          return next && item.id === next.id && item.filename === next.filename && item.mime === next.mime && item.sizeBytes === next.sizeBytes;
+        })
+          ? current
+          : nextMediaItems
+      ));
       setTargets(data.targets ?? []);
       setNotFound(false);
     } catch (e) {
