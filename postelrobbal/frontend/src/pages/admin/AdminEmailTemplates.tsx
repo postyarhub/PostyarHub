@@ -295,7 +295,7 @@ export default function AdminEmailTemplates() {
           <div style={{ width: '100%', maxWidth: mobilePreview ? 360 : 560, margin: '0 auto', transition: 'max-width .2s ease', background: '#f2f4fa', padding: mobilePreview ? 7 : 12, borderRadius: 14, boxSizing: 'border-box' }}>
             <div style={{ border: '1px solid #e5e9f3', borderTop: '4px solid #f28c28', borderRadius: 15, overflow: 'hidden', background: '#fff', color: '#1b2444', fontFamily: 'Vazirmatn,Tahoma,Arial,sans-serif' }}>
               <div style={{ padding: mobilePreview ? '15px 14px' : '20px 22px', borderBottom: '1px solid #edf0f6', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 11 }}>
-                <img src="/email-assets/postyar-logo-mark.webp" alt="لوگوی رسمی پُست‌یار" style={{ width: 42, height: 'auto', flex: '0 0 auto' }} />
+                <img src="/icons/icon-512x512.png" alt="لوگوی رسمی پُست‌یار" style={{ width: 42, height: 'auto', flex: '0 0 auto' }} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 19, fontWeight: 900, lineHeight: 1.5, color: '#202b61' }}>پُست‌یار</div>
                   <div style={{ fontSize: 11.5, color: '#68738b', lineHeight: 1.8 }}>مدیریت یکپارچهٔ انتشار محتوا</div>
