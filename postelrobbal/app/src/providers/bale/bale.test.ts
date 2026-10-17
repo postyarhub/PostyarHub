@@ -77,4 +77,49 @@ describe('Bale request encoding and inline keyboard payload', () => {
     })).rejects.toMatchObject({ providerClass: 'VALIDATION' });
     expect(httpJsonMock).not.toHaveBeenCalled();
   });
+  it('uses the documented sendMediaGroup endpoint for ordered photo albums', async () => {
+    httpMultipartJsonMock.mockResolvedValue({
+      status: 200,
+      data: { ok: true, result: [{ message_id: 456 }, { message_id: 457 }] },
+    });
+    const adapter = new BaleAdapter();
+    const result = await adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: 'آلبوم تصاویر',
+      media: [
+        { buffer: Buffer.from('photo-one'), filename: 'one.jpg', mime: 'image/jpeg' },
+        { buffer: Buffer.from('photo-two'), filename: 'two.jpg', mime: 'image/jpeg' },
+      ],
+    });
+
+    expect(result.messageId).toBe('456');
+    const [url, fields, files] = httpMultipartJsonMock.mock.calls[0] as [
+      string,
+      Record<string, string>,
+      Array<{ fieldName: string; filename: string; data: Buffer }>,
+    ];
+    expect(url).toContain('/sendMediaGroup');
+    expect(fields.chat_id).toBe('-100123');
+    const media = JSON.parse(fields.media ?? '[]') as Array<{ type: string; media: string; caption?: string }>;
+    expect(media).toEqual([
+      { type: 'photo', media: 'attach://file0', caption: 'آلبوم تصاویر' },
+      { type: 'photo', media: 'attach://file1' },
+    ]);
+    expect(files.map((file) => [file.fieldName, file.filename])).toEqual([
+      ['file0', 'one.jpg'],
+      ['file1', 'two.jpg'],
+    ]);
+  });
+
+  it('rejects album sizes outside the documented 2–10 photo range before any request', async () => {
+    const adapter = new BaleAdapter();
+    await expect(adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: '',
+      media: [{ buffer: Buffer.from('one'), filename: 'one.jpg', mime: 'image/jpeg' }],
+    })).rejects.toMatchObject({ providerClass: 'VALIDATION' });
+    expect(httpMultipartJsonMock).not.toHaveBeenCalled();
+    expect(httpJsonMock).not.toHaveBeenCalled();
+  });
+
 });
