@@ -382,7 +382,7 @@ async function deliverPost(targetId: string): Promise<void> {
       inlineButtons.length === 0 &&
       typeof provider.sendMediaGroup === 'function'
     ) {
-      // Telegram and Bale support official media albums. Keep long text in a
+      // Telegram has a documented media-album endpoint. Keep long text in a
       // separate text message because media captions are limited to 1024 chars.
       result = await provider.sendMediaGroup(token, {
         chatRef: channel.channelRef,
@@ -415,9 +415,10 @@ async function deliverPost(targetId: string): Promise<void> {
         kind: item.kind,
       });
     } else {
-      // Rubika has no documented album method in its public Bot API, and
-      // albums with buttons are not supported by Telegram/Bale. Send each
-      // image through the existing official single-file method, only attaching
+      // Bale and Rubika do not have a verified public album endpoint in the
+      // documented bot APIs used by this integration; Telegram albums also
+      // cannot carry inline buttons. Send each image through the current
+      // single-file method, only attaching
       // the caption/buttons to the first image.
       let firstResult: Awaited<ReturnType<typeof provider.sendMedia>> | null = null;
       for (let index = 0; index < mediaPayloads.length; index += 1) {
