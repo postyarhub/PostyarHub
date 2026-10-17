@@ -21,6 +21,7 @@
 # POSTYAR_AUTH_REACT_ROUTES_R12
   RewriteRule ^login/?$ /index.html [L]
   RewriteRule ^register/?$ /index.html [L]
+  RewriteRule ^reset-password/?$ /index.html [L]
   RewriteRule ^index\.html$ - [L]
 
   # Existing React SPA routes only. Static SEO directories/files bypass these rules.
