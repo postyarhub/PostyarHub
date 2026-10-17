@@ -123,7 +123,7 @@ function resolveTemplateText(value: string, input: EmailTemplateInput): string {
   const values = tokenValues(input);
   return value.replace(/\{\{([^{}]+)\}\}/g, (match, rawToken: string) => {
     const token = rawToken.trim();
-    return Object.prototype.hasOwnProperty.call(values, token) ? values[token] : match;
+    return Object.prototype.hasOwnProperty.call(values, token) ? (values[token] ?? match) : match;
   });
 }
 
