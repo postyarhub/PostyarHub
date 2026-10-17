@@ -310,6 +310,7 @@ function ForgotForm({ onModeChange, captchaEnabled }: { onModeChange: (m: 'login
   const [email, setEmail] = useState('');
   const [captcha, setCaptcha] = useState<CaptchaValue | null>(null);
   const [captchaError, setCaptchaError] = useState('');
+  const [requestError, setRequestError] = useState('');
   const captchaRef = useRef<CaptchaHandle>(null);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -322,6 +323,7 @@ function ForgotForm({ onModeChange, captchaEnabled }: { onModeChange: (m: 'login
     }
     setBusy(true);
     setCaptchaError('');
+    setRequestError('');
     try {
       const payload: Record<string, unknown> = { email };
       if (captchaEnabled && captcha) {
@@ -331,12 +333,18 @@ function ForgotForm({ onModeChange, captchaEnabled }: { onModeChange: (m: 'login
       await api.post('/api/v1/auth/password-reset', payload);
       setSent(true);
     } catch (err) {
-      const msg = err instanceof ApiRequestError ? err.message : 'درخواست بازیابی ناموفق بود.';
+      const msg = err instanceof ApiRequestError ? err.message : '';
       if (captchaEnabled) {
         captchaRef.current?.refresh();
         setCaptcha(null);
       }
-      setCaptchaError(msg.includes('کد امنیتی') ? msg : '');
+      if (msg.includes('کد امنیتی')) {
+        setCaptchaError(msg);
+        setRequestError('');
+      } else {
+        // Surface infrastructure failures without revealing whether an account exists.
+        setRequestError('در حال حاضر درخواست بازیابی انجام نشد. چند دقیقه دیگر دوباره تلاش کنید.');
+      }
     } finally {
       setBusy(false);
     }
@@ -367,6 +375,7 @@ function ForgotForm({ onModeChange, captchaEnabled }: { onModeChange: (m: 'login
         }}
         invalidToken={captchaError}
       />}
+      {requestError && <p role="alert" className="field-error" style={{ margin: '0 0 14px', lineHeight: 1.8 }}>{requestError}</p>}
       <Button type="submit" block loading={busy}>ارسال راهنمای بازیابی</Button>
       <div style={{ textAlign: 'center', marginTop: 14, fontSize: 13 }}>
         <button type="button" style={{ background: 'none', border: 'none', color: 'var(--brand)', fontWeight: 600 }} onClick={() => onModeChange('login')}>

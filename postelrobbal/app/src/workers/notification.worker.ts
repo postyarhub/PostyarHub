@@ -83,7 +83,12 @@ async function handlePasswordReset(job: Job): Promise<void> {
   if (resetTokenId) {
     token = (await getRedis().get(`${PASSWORD_RESET_DELIVERY_KEY_PREFIX}${resetTokenId}`)) ?? undefined;
     if (!token) {
-      log.warn({ jobId: job.id, tenantId }, 'password_reset_delivery_token_missing_or_expired');
+      log.warn({
+        jobId: job.id,
+        tenantId,
+        resetTokenId,
+        attemptsMade: job.attemptsMade,
+      }, 'password_reset_delivery_token_missing_or_expired');
       await notifyTenant({
         tenantId,
         kind: 'PASSWORD_RESET',
@@ -120,7 +125,14 @@ async function handlePasswordReset(job: Job): Promise<void> {
   });
 
   if (!result.ok) {
-    log.warn({ event: 'password_reset_email_failed', reason: result.reason ?? 'UNKNOWN', tenantId }, 'password_reset_email_failed');
+    log.warn({
+      event: 'password_reset_email_failed',
+      reason: result.reason ?? 'UNKNOWN',
+      tenantId,
+      jobId: job.id,
+      resetTokenId: resetTokenId ?? null,
+      attemptsMade: job.attemptsMade,
+    }, 'password_reset_email_failed');
     await notifyTenant({
       tenantId,
       kind: 'PASSWORD_RESET',
@@ -137,6 +149,11 @@ async function handlePasswordReset(job: Job): Promise<void> {
     if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
     return;
   }
+  log.info({
+    tenantId,
+    jobId: job.id,
+    resetTokenId: resetTokenId ?? null,
+  }, 'password_reset_email_accepted_by_smtp');
   if (resetTokenId) await deletePasswordResetDeliveryToken(resetTokenId).catch(() => undefined);
 }
 
