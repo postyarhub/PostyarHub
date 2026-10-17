@@ -163,10 +163,6 @@ function normalizeDraft(value?: Partial<TemplateDraft>): TemplateDraft {
   return { ...EMPTY_DRAFT, ...(value ?? {}) };
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
 function previewText(value: string, values: Record<string, string>): string {
   return value.replace(/\{\{([^{}]+)\}\}/g, (_match, token: string) => values[token.trim()] ?? _match);
 }
