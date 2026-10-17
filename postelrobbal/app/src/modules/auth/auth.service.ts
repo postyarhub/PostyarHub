@@ -8,6 +8,7 @@ import { newId, newToken, sha256Hex } from '../../core/ids.js';
 import { getRedis } from '../../queue/connection.js';
 import { emitEvent } from '../../core/events.js';
 import { audit } from '../../core/audit.js';
+import { enqueueUserEmailNotice } from '../notifications/email-notifications.js';
 
 export interface RegisterInput {
   firstName: string;
@@ -292,5 +293,13 @@ export async function confirmPasswordReset(token: string, newPassword: string): 
   });
   if (!changed) return false;
   await audit({ action: 'auth.password_reset', subjectType: 'user', subjectId: row.userId });
+  await enqueueUserEmailNotice(row.userId, {
+    subject: 'رمز عبور پُست‌یار تغییر کرد',
+    preheader: 'رمز عبور حساب شما با موفقیت تغییر کرده است.',
+    title: 'بازیابی رمز عبور انجام شد',
+    paragraphs: ['رمز عبور حساب پُست‌یار شما تغییر کرده است. اگر این اقدام را شما انجام نداده‌اید، فوراً با پشتیبانی تماس بگیرید و امنیت حساب خود را بررسی کنید.'],
+    buttonLabel: 'ورود به پنل پُست‌یار',
+    buttonPath: '/login',
+  }, 'password-reset-complete:' + row.id);
   return true;
 }
