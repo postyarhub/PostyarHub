@@ -114,7 +114,7 @@ async function handlePasswordReset(job: Job): Promise<void> {
   }, env.APP_URL, await getEmailTemplateSettings());
   const result = await sendEmail({
     to: email,
-    subject: 'بازیابی رمز عبور پُست‌یار',
+    subject: resetMessage.subject,
     text: resetMessage.text,
     html: resetMessage.html,
   });
