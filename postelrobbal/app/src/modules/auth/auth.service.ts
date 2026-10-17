@@ -8,6 +8,7 @@ import { newId, newToken, sha256Hex } from '../../core/ids.js';
 import { getRedis } from '../../queue/connection.js';
 import { emitEvent } from '../../core/events.js';
 import { audit } from '../../core/audit.js';
+import { createLogger } from '../../core/logger.js';
 import { enqueueUserEmailNotice } from '../notifications/email-notifications.js';
 
 export interface RegisterInput {
@@ -24,6 +25,7 @@ export interface RegisterInput {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const passwordResetLog = createLogger('password-reset');
 const MOBILE_RE = /^09\d{9}$/;
 
 function normalizeMobile(m: string): string {
@@ -238,6 +240,8 @@ const PASSWORD_RESET_EMAIL_COUNTER_SCRIPT = [
 export async function requestPasswordReset(email: string): Promise<boolean> {
   const normalizedEmail = email.trim().toLowerCase();
   const emailHash = await sha256Hex(normalizedEmail);
+  // This short digest is an internal correlation token; never log email addresses or reset secrets.
+  const emailFingerprint = emailHash.slice(0, 12);
   let requests: number;
   try {
     requests = Number(await getRedis().eval(
@@ -246,26 +250,72 @@ export async function requestPasswordReset(email: string): Promise<boolean> {
       `postyar:rate-limit:password-reset-email:${emailHash}`,
       String(PASSWORD_RESET_EMAIL_WINDOW_SECONDS),
     ));
-  } catch {
+  } catch (err) {
+    passwordResetLog.error({
+      emailFingerprint,
+      errorName: err instanceof Error ? err.name : 'UNKNOWN',
+    }, 'password_reset_rate_limit_store_failed');
     // Fail closed: a reset email must not be sent without its abuse-control store.
     throw new AppError(ERR.INTERNAL());
   }
+
+  if (!Number.isSafeInteger(requests) || requests < 1) {
+    passwordResetLog.error({ emailFingerprint, requestCount: requests }, 'password_reset_rate_limit_counter_invalid');
+    return false;
+  }
+
   const db = getDb();
   const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
-  if (!user || !Number.isSafeInteger(requests) || requests < 1 || requests > PASSWORD_RESET_EMAIL_LIMIT) {
+  if (!user) {
+    passwordResetLog.info({ emailFingerprint }, 'password_reset_suppressed_unknown_account');
+    return false;
+  }
+  if (requests > PASSWORD_RESET_EMAIL_LIMIT) {
+    passwordResetLog.warn({
+      emailFingerprint,
+      requestCount: requests,
+      limit: PASSWORD_RESET_EMAIL_LIMIT,
+    }, 'password_reset_suppressed_rate_limit');
     return false;
   }
 
   const token = newToken(24);
   const passwordResetTokenId = newId();
-  await db.insert(passwordResetTokens).values({
-    id: passwordResetTokenId,
-    userId: user.id,
-    tokenHash: await sha256Hex(token),
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000), // short-lived, one-time (§179)
-  });
-  const { enqueuePasswordResetDelivery } = await import('../notifications/delivery.js');
-  await enqueuePasswordResetDelivery(user.id, passwordResetTokenId, token);
+  try {
+    await db.insert(passwordResetTokens).values({
+      id: passwordResetTokenId,
+      userId: user.id,
+      tokenHash: await sha256Hex(token),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000), // short-lived, one-time (§179)
+    });
+  } catch (err) {
+    passwordResetLog.error({
+      emailFingerprint,
+      resetTokenId: passwordResetTokenId,
+      errorName: err instanceof Error ? err.name : 'UNKNOWN',
+    }, 'password_reset_token_persist_failed');
+    throw err;
+  }
+
+  try {
+    const { enqueuePasswordResetDelivery } = await import('../notifications/delivery.js');
+    await enqueuePasswordResetDelivery(user.id, passwordResetTokenId, token);
+    passwordResetLog.info({
+      emailFingerprint,
+      resetTokenId: passwordResetTokenId,
+      requestCount: requests,
+    }, 'password_reset_delivery_enqueued');
+  } catch (err) {
+    passwordResetLog.error({
+      emailFingerprint,
+      resetTokenId: passwordResetTokenId,
+      errorName: err instanceof Error ? err.name : 'UNKNOWN',
+      errorCode: err && typeof err === 'object' && 'code' in err && typeof (err as { code?: unknown }).code === 'string'
+        ? String((err as { code: string }).code).slice(0, 40)
+        : null,
+    }, 'password_reset_delivery_enqueue_failed');
+    throw err;
+  }
   return true;
 }
 
