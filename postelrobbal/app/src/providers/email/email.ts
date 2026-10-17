@@ -1,21 +1,17 @@
-import net from 'node:net';
-import tls from 'node:tls';
+import nodemailer from 'nodemailer';
 import { loadEnv } from '../../config/env.js';
 import { createLogger } from '../../core/logger.js';
-
-/**
- * Email adapter (honest v1, §27): no fake success. Without MAIL_HOST the send
- * is reported as NOT_CONFIGURED. With MAIL_HOST a minimal SMTP client
- * (implicit TLS on 465, STARTTLS otherwise, AUTH LOGIN) performs a real
- * delivery. Reset tokens or credentials are never logged (§62).
- */
+import { getEmailSettings } from '../../modules/admin/system-settings.service.js';
 
 const log = createLogger('email-provider');
+const SMTP_TIMEOUT_MS = 20_000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export interface SendEmailInput {
   to: string;
   subject: string;
   text: string;
+  html?: string;
 }
 
 export interface SendEmailResult {
@@ -23,167 +19,97 @@ export interface SendEmailResult {
   reason?: string;
 }
 
-const SMTP_TIMEOUT_MS = 20_000;
-
-class SmtpClient {
-  constructor(private socket: net.Socket | tls.TLSSocket) {}
-
-  rawSocket(): net.Socket | tls.TLSSocket {
-    return this.socket;
-  }
-
-  private readReply(): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const cleanup = () => {
-        this.socket.off('data', onData);
-        this.socket.off('error', onError);
-        this.socket.off('timeout', onTimeout);
-      };
-      const onData = (chunk: Buffer | string) => {
-        this.buffer += chunk.toString('utf8');
-        const endsWithCrlf = /\r?\n$/.test(this.buffer);
-        if (!endsWithCrlf) return;
-        const lines = this.buffer.split(/\r?\n/).filter((l) => l.length > 0);
-        const last = lines[lines.length - 1];
-        if (lines.length >= 1 && last && /^\d{3} /.test(last)) {
-          this.buffer = '';
-          cleanup();
-          resolve(lines.join('\n'));
-        }
-      };
-      const onError = (err: Error) => {
-        cleanup();
-        reject(err);
-      };
-      const onTimeout = () => {
-        cleanup();
-        reject(new Error('SMTP_TIMEOUT'));
-      };
-      this.socket.on('data', onData);
-      this.socket.on('error', onError);
-      this.socket.once('timeout', onTimeout);
-    });
-  }
-
-  private buffer = '';
-
-  async command(payload: string | null, okCodes: number[]): Promise<string> {
-    if (payload !== null) this.socket.write(`${payload}\r\n`);
-    const reply = await this.readReply();
-    const code = Number.parseInt(reply.slice(0, 3), 10);
-    if (!okCodes.includes(code)) {
-      throw new Error(`SMTP_UNEXPECTED_REPLY: ${reply.slice(0, 120)}`);
-    }
-    return reply;
-  }
-
-  end(): void {
-    this.socket.end();
-  }
+interface RuntimeMailConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  fromName: string;
+  fromEmail: string;
 }
 
-function connect(host: string, port: number, implicitTls: boolean): Promise<SmtpClient> {
-  return new Promise((resolve, reject) => {
-    const onError = (err: Error) => reject(err);
-    const onTimeout = () => reject(new Error('SMTP_CONNECT_TIMEOUT'));
-    const socket: net.Socket | tls.TLSSocket = implicitTls
-      ? tls.connect({ host, port, servername: host })
-      : net.connect({ host, port });
-    socket.setTimeout(SMTP_TIMEOUT_MS);
-    socket.once('error', onError);
-    socket.once('timeout', onTimeout);
-    const onReady = () => {
-      socket.off('error', onError);
-      socket.off('timeout', onTimeout);
-      resolve(new SmtpClient(socket));
-    };
-    socket.once(implicitTls ? 'secureConnect' : 'connect', onReady);
-  });
+type RuntimeConfigResult = { config: RuntimeMailConfig } | { reason: 'DISABLED' | 'NOT_CONFIGURED' };
+
+async function runtimeMailConfig(): Promise<RuntimeConfigResult> {
+  const settings = await getEmailSettings();
+  if (!settings.enabled) return { reason: 'DISABLED' };
+  const env = loadEnv();
+  const host = settings.host.trim() || (env.MAIL_HOST ?? '').trim();
+  const port = settings.host.trim() ? settings.port : (env.MAIL_PORT ?? settings.port);
+  const user = settings.user.trim() || (env.MAIL_USER ?? '').trim();
+  const pass = settings.pass || env.MAIL_PASSWORD || '';
+  if (!host || !user || !pass) return { reason: 'NOT_CONFIGURED' };
+
+  const secure = port === 465 ? true : port === 587 ? false : settings.secure;
+  return {
+    config: {
+      host,
+      port,
+      secure,
+      user,
+      pass,
+      fromName: settings.fromName.trim() || 'پُست‌یار',
+      fromEmail: settings.fromEmail.trim() || user,
+    },
+  };
 }
 
-function upgradeTls(client: SmtpClient, host: string): Promise<SmtpClient> {
-  return new Promise((resolve, reject) => {
-    const plain = client.rawSocket();
-    const onError = (err: Error) => reject(err);
-    const secure = tls.connect({ socket: plain, servername: host });
-    secure.setTimeout(SMTP_TIMEOUT_MS);
-    secure.once('error', onError);
-    secure.once('secureConnect', () => {
-      secure.off('error', onError);
-      resolve(new SmtpClient(secure));
-    });
-  });
-}
-
-function encodeHeader(value: string): string {
-  return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
-}
-
-function buildMessage(from: string, to: string, subject: string, text: string): string {
-  const body = Buffer.from(text, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
-  return [
-    `From: Postyar <${from}>`,
-    `To: ${to}`,
-    `Subject: ${encodeHeader(subject)}`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    body,
-  ].join('\r\n');
-}
-
-/** RFC 5321 dot-stuffing (kept for robustness even with base64 bodies). */
-function dotStuff(message: string): string {
-  return message
-    .split('\r\n')
-    .map((line) => (line.startsWith('.') ? `.${line}` : line))
-    .join('\r\n');
+export async function isEmailDeliveryConfigured(): Promise<boolean> {
+  const result = await runtimeMailConfig();
+  return 'config' in result;
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
-  const env = loadEnv();
-  if (!env.MAIL_HOST) {
-    log.warn({ event: 'email_queued_unconfigured' }, 'email_queued_unconfigured');
-    return { ok: false, reason: 'NOT_CONFIGURED' };
+  if (!input.to || input.to.length > 190 || !EMAIL_RE.test(input.to) || /[\r\n]/.test(input.to)) {
+    return { ok: false, reason: 'INVALID_RECIPIENT' };
+  }
+  const subject = input.subject.trim().replace(/[\r\n]+/g, ' ').slice(0, 190);
+  if (!subject || (!input.text && !input.html) || input.text.length > 200_000 || (input.html?.length ?? 0) > 500_000) {
+    return { ok: false, reason: 'INVALID_MESSAGE' };
   }
 
-  const port = env.MAIL_PORT ?? 587;
-  const user = env.MAIL_USER;
-  const password = env.MAIL_PASSWORD;
-  const from = user ?? 'no-reply@postyar.ir';
-  let client: SmtpClient | null = null;
+  let result: RuntimeConfigResult;
+  try {
+    result = await runtimeMailConfig();
+  } catch {
+    log.warn({ reason: 'EMAIL_CONFIGURATION_UNAVAILABLE' }, 'email_configuration_unavailable');
+    return { ok: false, reason: 'EMAIL_CONFIGURATION_UNAVAILABLE' };
+  }
+  if (!('config' in result)) return { ok: false, reason: result.reason };
+  const config = result.config;
+
+  const transport = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    requireTLS: !config.secure,
+    auth: { user: config.user, pass: config.pass },
+    tls: { minVersion: 'TLSv1.2' },
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: 10_000,
+    socketTimeout: SMTP_TIMEOUT_MS,
+  });
 
   try {
-    client = await connect(env.MAIL_HOST, port, port === 465);
-    await client.command(null, [220]); // greeting
-    let ehlo = await client.command('EHLO postyar.ir', [250]);
-
-    if (port !== 465 && /STARTTLS/i.test(ehlo)) {
-      await client.command('STARTTLS', [220]);
-      client = await upgradeTls(client, env.MAIL_HOST);
-      ehlo = await client.command('EHLO postyar.ir', [250]);
+    const info = await transport.sendMail({
+      from: { name: config.fromName, address: config.fromEmail },
+      to: input.to,
+      subject,
+      text: input.text,
+      ...(input.html ? { html: input.html } : {}),
+    });
+    if (!Array.isArray(info.accepted) || info.accepted.length === 0 || (Array.isArray(info.rejected) && info.rejected.length > 0)) {
+      return { ok: false, reason: 'SMTP_RECIPIENT_REJECTED' };
     }
-    void ehlo;
-
-    if (user && password) {
-      await client.command('AUTH LOGIN', [334]);
-      await client.command(Buffer.from(user, 'utf8').toString('base64'), [334]);
-      await client.command(Buffer.from(password, 'utf8').toString('base64'), [235]);
-    }
-
-    await client.command(`MAIL FROM:<${from}>`, [250]);
-    await client.command(`RCPT TO:<${input.to}>`, [250, 251]);
-    await client.command('DATA', [354]);
-    const message = buildMessage(from, input.to, input.subject, input.text);
-    await client.command(`${dotStuff(message)}\r\n.`, [250]);
-    client.command('QUIT', [221]).catch(() => undefined); // closing handshake is best-effort
-    client.end();
     return { ok: true };
   } catch (err) {
-    client?.end();
-    const reason = err instanceof Error ? err.message.slice(0, 120) : 'SMTP_ERROR';
-    log.warn({ event: 'email_send_failed', reason }, 'email_send_failed');
-    return { ok: false, reason };
+    const code = typeof (err as { code?: unknown })?.code === 'string'
+      ? String((err as { code: string }).code).replace(/[^A-Z0-9_-]/gi, '').slice(0, 40)
+      : 'SMTP_ERROR';
+    log.warn({ reason: code || 'SMTP_ERROR' }, 'email_send_failed');
+    return { ok: false, reason: code || 'SMTP_ERROR' };
+  } finally {
+    transport.close();
   }
 }
