@@ -3,7 +3,6 @@ import { events, eventDaily } from '../db/schema.js';
 import { newId } from './ids.js';
 import { sql } from 'drizzle-orm';
 import { recordAnalyticsEvent } from '../modules/analytics/analytics.service.js';
-import { enqueue } from '../queue/queues.js';
 
 /**
  * Analytics event emission (§24, §165). No credentials/tokens/secrets in props.
@@ -64,6 +63,7 @@ export async function emitEvent(input: {
   // happen in the notification worker and cannot hold a business request open.
   if (EMAIL_EVENT_NAMES.has(input.name)) {
     try {
+      const { enqueue } = await import('../queue/queues.js');
       await enqueue('notifications', 'business-email-event', {
         eventId,
         name: input.name,
