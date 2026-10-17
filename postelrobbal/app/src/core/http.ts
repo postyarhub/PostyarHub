@@ -184,7 +184,8 @@ export interface HttpMultipartFile {
   data: Buffer;
 }
 
-function encodeMultipartBody(
+/** @internal: reusable multipart encoder for the HTTP client and its tests. */
+export function encodeMultipartBody(
   fields: Record<string, string>,
   inputFiles: HttpMultipartFile | HttpMultipartFile[],
 ): { body: Buffer; contentType: string } {
