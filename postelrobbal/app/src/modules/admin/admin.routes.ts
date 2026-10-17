@@ -57,7 +57,7 @@ import {
 import {
   getSmsSettings,
   putSmsSettings,
-  getEmailSettings,
+  getPublicEmailSettings,
   putEmailSettings,
   sendTestEmail,
   getGeneralSettings,
@@ -860,7 +860,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
   // ---- email (SMTP) settings (admin-panel v2) ----
   app.get('/admin/settings/email', settingsManage, async () => {
-    const data = await getEmailSettings();
+    const data = await getPublicEmailSettings();
     return { success: true, data };
   });
 
