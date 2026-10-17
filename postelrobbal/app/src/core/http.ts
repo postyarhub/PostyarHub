@@ -184,7 +184,12 @@ export interface HttpMultipartFile {
   data: Buffer;
 }
 
-function encodeMultipartBody(fields: Record<string, string>, file: HttpMultipartFile): { body: Buffer; contentType: string } {
+function encodeMultipartBody(
+  fields: Record<string, string>,
+  inputFiles: HttpMultipartFile | HttpMultipartFile[],
+): { body: Buffer; contentType: string } {
+  const files = Array.isArray(inputFiles) ? inputFiles : [inputFiles];
+  if (files.length < 1 || files.length > 10) throw new Error('MULTIPART_FILE_COUNT_INVALID');
   const boundary = `----PostYarBoundary${randomBytes(12).toString('hex')}`;
   const chunks: Buffer[] = [];
   const pushText = (value: string) => chunks.push(Buffer.from(value, 'utf8'));
@@ -194,14 +199,16 @@ function encodeMultipartBody(fields: Record<string, string>, file: HttpMultipart
     pushText(value);
     pushText('\r\n');
   }
-  const field = file.fieldName.replace(/[\"\r\n]/g, '');
-  const filename = file.filename.replace(/[\"\r\n]/g, '_').slice(0, 180) || 'postyar-media';
-  const contentType = file.contentType.replace(/[\r\n]/g, '').slice(0, 120) || 'application/octet-stream';
-  pushText(`--${boundary}\r\n`);
-  pushText(`Content-Disposition: form-data; name=\"${field}\"; filename=\"${filename}\"\r\n`);
-  pushText(`Content-Type: ${contentType}\r\n\r\n`);
-  chunks.push(file.data);
-  pushText('\r\n');
+  for (const file of files) {
+    const field = file.fieldName.replace(/["\r\n]/g, '');
+    const filename = file.filename.replace(/["\r\n]/g, '_').slice(0, 180) || 'postyar-media';
+    const contentType = file.contentType.replace(/[\r\n]/g, '').slice(0, 120) || 'application/octet-stream';
+    pushText(`--${boundary}\r\n`);
+    pushText(`Content-Disposition: form-data; name="${field}"; filename="${filename}"\r\n`);
+    pushText(`Content-Type: ${contentType}\r\n\r\n`);
+    chunks.push(file.data);
+    pushText('\r\n');
+  }
   pushText(`--${boundary}--\r\n`);
   return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
 }
@@ -214,7 +221,7 @@ function encodeMultipartBody(fields: Record<string, string>, file: HttpMultipart
 export async function httpMultipartJson<T>(
   url: string,
   fields: Record<string, string>,
-  file: HttpMultipartFile,
+  file: HttpMultipartFile | HttpMultipartFile[],
   timeoutMs = 30_000,
   ssrfGuard = true,
 ): Promise<{ status: number; data: T }> {
