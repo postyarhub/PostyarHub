@@ -5,6 +5,13 @@ import { Badge, Button, Card, ConfirmDialog, EmptyState, PageLoading, StatusBadg
 import { useToast } from '../../lib/toast';
 import { faDateTime, faDigits, faLabel, faRelative, DELIVERY_STATE_FA, EVENT_TYPE_FA, PLATFORM_FA, POST_SOURCE_FA, POST_STATE_FA } from '../../lib/format';
 
+interface PostMediaDto {
+  id: string;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+}
+
 interface PostFullDto {
   id: string;
   title: string | null;
@@ -15,6 +22,7 @@ interface PostFullDto {
   publishedAt: string | null;
   createdAt: string;
   mediaId: string | null;
+  mediaIds?: string[] | null;
 }
 
 interface PostAnalyticsDto {
@@ -54,15 +62,22 @@ export default function PostDetail() {
   const [busyTargetId, setBusyTargetId] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaItems, setMediaItems] = useState<PostMediaDto[]>([]);
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   const [analytics, setAnalytics] = useState<PostAnalyticsDto | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!id) return;
     if (!silent) setLoading(true);
     try {
-      const data = await api.get<{ post: PostFullDto; targets: TargetViewDto[] }>(`/api/v1/posts/${id}`);
+      const data = await api.get<{
+        post: PostFullDto;
+        targets: TargetViewDto[];
+        media?: PostMediaDto | null;
+        mediaItems?: PostMediaDto[];
+      }>(`/api/v1/posts/${id}`);
       setPost(data.post);
+      setMediaItems(data.mediaItems?.length ? data.mediaItems : data.media ? [data.media] : []);
       setTargets(data.targets ?? []);
       setNotFound(false);
     } catch (e) {
@@ -86,17 +101,20 @@ export default function PostDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (!post?.mediaId) {
-      setMediaUrl('');
-      return;
-    }
     let alive = true;
-    api
-      .get<{ url: string }>(`/api/v1/media/${post.mediaId}/token`)
-      .then((a) => { if (alive) setMediaUrl(a.url); })
-      .catch(() => { if (alive) setMediaUrl(''); });
+    setMediaUrls({});
+    void Promise.all(mediaItems.filter((item) => item.mime.startsWith('image/')).map(async (item) => {
+      try {
+        const access = await api.get<{ url: string }>(`/api/v1/media/${item.id}/token`);
+        return [item.id, access.url] as const;
+      } catch {
+        return null;
+      }
+    })).then((entries) => {
+      if (alive) setMediaUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)));
+    });
     return () => { alive = false; };
-  }, [post?.mediaId]);
+  }, [mediaItems]);
 
   useEffect(() => {
     void load();
@@ -216,14 +234,27 @@ export default function PostDetail() {
           {post.body}
         </div>
 
-        {post.mediaId && (
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 13 }}>
-            📎 این پست دارای رسانه پیوست است.
-            {mediaUrl && (
-              <>
-                {' '}
-                <a href={mediaUrl} target="_blank" rel="noreferrer">مشاهده رسانه</a>
-              </>
+        {(mediaItems.length > 0 || post.mediaId) && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'grid', gap: 10 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+              {faDigits(mediaItems.length || (post.mediaIds?.length ?? 0) || 1)} رسانه به این پست پیوست شده است.
+            </div>
+            {mediaItems.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(125px, 1fr))', gap: 10 }}>
+                {mediaItems.map((item) => (
+                  <div key={item.id} style={{ minWidth: 0, border: '1px solid var(--border)', borderRadius: 10, padding: 8, display: 'grid', gap: 6 }}>
+                    {mediaUrls[item.id] ? (
+                      <img src={mediaUrls[item.id]} alt={item.filename} style={{ width: '100%', height: 96, objectFit: 'cover', borderRadius: 6 }} />
+                    ) : (
+                      <div style={{ height: 96, display: 'grid', placeItems: 'center', background: 'var(--surface-2)', borderRadius: 6, color: 'var(--text-2)', fontSize: 12 }}>
+                        {item.mime === 'video/mp4' ? 'ویدیو' : 'پیش‌نمایش در دسترس نیست'}
+                      </div>
+                    )}
+                    <span dir="ltr" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{item.filename}</span>
+                    {mediaUrls[item.id] && <a href={mediaUrls[item.id]} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>مشاهده رسانه</a>}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
