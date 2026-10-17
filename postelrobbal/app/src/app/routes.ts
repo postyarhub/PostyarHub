@@ -4,6 +4,7 @@ import { registerUserRoutes } from '../modules/users/user.routes.js';
 import { registerChannelRoutes } from '../modules/channels/channel.routes.js';
 import { registerPostRoutes } from '../modules/publishing/post.routes.js';
 import { registerSurveyRoutes } from '../modules/surveys/survey.routes.js';
+import { registerFeedbackRoutes } from '../modules/feedback/feedback.routes.js';
 import { registerBotRoutes } from '../modules/bots/bot.routes.js';
 import { registerWorkflowRoutes } from '../modules/workflows/workflow.routes.js';
 import { registerAiRoutes } from '../modules/ai/ai.routes.js';
@@ -30,6 +31,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
       await registerChannelRoutes(v1);
       await registerPostRoutes(v1);
       await registerSurveyRoutes(v1);
+      await registerFeedbackRoutes(v1);
       await registerBotRoutes(v1);
       await registerWorkflowRoutes(v1);
       await registerAiRoutes(v1);

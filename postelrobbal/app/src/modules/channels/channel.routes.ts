@@ -5,6 +5,7 @@ import { parseWith } from '../../core/validation.js';
 import { getProvider } from '../../providers/index.js';
 import type { Platform } from '../../providers/types.js';
 import { deleteChannelButton, listSavedButtons, saveChannelButton } from './button-library.service.js';
+import { deleteSavedFooter, listSavedFooters, saveChannelFooter } from './footer-library.service.js';
 import {
   listChannels, connectChannel, verifyChannel, disconnectChannel, updateChannel, ActorMeta,
   startRubikaChannelDiscovery, getRubikaChannelDiscovery,
@@ -44,6 +45,9 @@ const savedButtonTargetSchema = z.discriminatedUnion('type', [
 const saveButtonSchema = z.object({
   label: z.string().trim().min(1).max(64),
   target: savedButtonTargetSchema,
+}).strict();
+const saveFooterSchema = z.object({
+  text: z.string().trim().min(1).max(500),
 }).strict();
 
 function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
@@ -106,6 +110,30 @@ export async function registerChannelRoutes(app: FastifyInstance): Promise<void>
     const channelId = parse(channelIdSchema, params.id);
     const buttonId = parse(channelIdSchema, params.buttonId);
     const result = await deleteChannelButton(tenantId, channelId, buttonId);
+    return { success: true, data: result };
+  });
+
+  app.get('/channels/:id/saved-footers', { preHandler: [app.requireAuth] }, async (req) => {
+    const { tenantId } = actor(req);
+    const id = parse(channelIdSchema, (req.params as Record<string, unknown>).id);
+    const footers = await listSavedFooters(tenantId, id);
+    return { success: true, data: { footers } };
+  });
+
+  app.post('/channels/:id/saved-footers', { preHandler: [app.requireAuth] }, async (req) => {
+    const { tenantId } = actor(req);
+    const id = parse(channelIdSchema, (req.params as Record<string, unknown>).id);
+    const input = parse(saveFooterSchema, req.body);
+    const footer = await saveChannelFooter(tenantId, id, input);
+    return { success: true, data: { footer } };
+  });
+
+  app.delete('/channels/:id/saved-footers/:footerId', { preHandler: [app.requireAuth] }, async (req) => {
+    const { tenantId } = actor(req);
+    const params = req.params as Record<string, unknown>;
+    const channelId = parse(channelIdSchema, params.id);
+    const footerId = parse(channelIdSchema, params.footerId);
+    const result = await deleteSavedFooter(tenantId, channelId, footerId);
     return { success: true, data: result };
   });
 

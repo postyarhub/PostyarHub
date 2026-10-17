@@ -13,6 +13,7 @@ import { JalaliDateTimePicker } from '../../components/JalaliDateTimePicker';
 import { useToast } from '../../lib/toast';
 import { faDigits, faNumber, PLATFORM_FA } from '../../lib/format';
 import { ChannelButtonEditor } from '../../components/ChannelButtonEditor';
+import { ChannelFooterEditor } from '../../components/ChannelFooterEditor';
 import { PlatformBadge } from '../../components/PlatformBadge';
 import { WebsiteContentPicker, type WebsiteDraftItem } from '../../components/WebsiteContentPicker';
 import { buttonTargetPreview, normalizeButtonTarget, type ButtonRow } from '../../lib/channelButtons';
@@ -719,18 +720,16 @@ export default function PostNew() {
         </p>
         {selectedChannels.length > 0 && (
           <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
-            {selectedChannels.map((channel) => {
-              const footer = footerTextByChannel[channel.id] ?? '';
-              const fieldId = 'channel-footer-' + channel.id;
-              return <label key={'footer-' + channel.id} htmlFor={fieldId} style={{ display: 'grid', gap: 6, padding: 10, border: '1px solid var(--border)', borderRadius: 10, minWidth: 0 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontWeight: 700, fontSize: 13 }}>
-                  <PlatformBadge platform={channel.platform} />
-                  <span>متن انتهایی — {channel.title}</span>
-                </span>
-                <textarea id={fieldId} value={footer} maxLength={MAX_CHANNEL_FOOTER} rows={2} disabled={publishing || scheduling} placeholder="مثلاً @admin یا https://example.com" onChange={(event) => setFooterTextByChannel((current) => ({ ...current, [channel.id]: event.target.value.slice(0, MAX_CHANNEL_FOOTER) }))} style={{ width: '100%', boxSizing: 'border-box', minHeight: 66, padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)', color: 'var(--text)', font: 'inherit', fontSize: 13, lineHeight: 1.8, resize: 'vertical' }} />
-                <small style={{ color: 'var(--text-2)', fontSize: 11.5 }}>{faDigits(footer.length)} از {faDigits(MAX_CHANNEL_FOOTER)} نویسه؛ این متن در انتهای پیام همان کانال درج می‌شود.</small>
-              </label>;
-            })}
+            {selectedChannels.map((channel) => (
+              <ChannelFooterEditor
+                key={channel.id}
+                channel={channel}
+                value={footerTextByChannel[channel.id] ?? ''}
+                maxLength={MAX_CHANNEL_FOOTER}
+                disabled={publishing || scheduling}
+                onChange={(value) => setFooterTextByChannel((current) => ({ ...current, [channel.id]: value }))}
+              />
+            ))}
           </div>
         )}
         {selectedChannels.length === 0 ? (
