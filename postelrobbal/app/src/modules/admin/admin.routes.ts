@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
+import { EMAIL_TEMPLATE_KEYS } from '../../providers/email/templates.js';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import { parseWith } from '../../core/validation.js';
@@ -60,6 +61,8 @@ import {
   getPublicEmailSettings,
   putEmailSettings,
   sendTestEmail,
+  getEmailTemplateSettings,
+  putEmailTemplateSettings,
   getGeneralSettings,
   putGeneralSettings,
   getAiSettings,
@@ -240,6 +243,16 @@ const emailPutSchema = z
 const emailTestSchema = z.object({
   to: z.string().min(3).max(190).email(),
 });
+const emailTemplateKeySchema = z.enum(EMAIL_TEMPLATE_KEYS);
+const emailTemplatePutSchema = z.object({
+  subject: z.string().max(190).optional(),
+  preheader: z.string().max(180).optional(),
+  title: z.string().max(160).optional(),
+  greeting: z.string().max(180).optional(),
+  paragraphs: z.string().max(4000).optional(),
+  buttonLabel: z.string().max(100).optional(),
+  footerNote: z.string().max(300).optional(),
+}).strict();
 
 // ---- general / ai / referral / security settings (round 17, form-shaped) ----
 const generalPutSchema = z
@@ -883,6 +896,27 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const input = parse(emailTestSchema, req.body);
     const data = await sendTestEmail(me.id, input.to);
     return { success: true, data };
+  });
+
+  // Editable content only: templates never accept arbitrary HTML or external CTA paths.
+  app.get('/admin/settings/email/templates', settingsManage, async () => {
+    const data = await getEmailTemplateSettings();
+    return { success: true, data };
+  });
+
+  app.put('/admin/settings/email/templates/:key', settingsManage, async (req) => {
+    const me = auth(req);
+    const params = parse(z.object({ key: emailTemplateKeySchema }).strict(), req.params);
+    const input = parse(emailTemplatePutSchema, req.body);
+    const fields = await putEmailTemplateSettings(params.key, input);
+    await audit({
+      action: 'admin.settings_updated',
+      actorId: me.id,
+      actorRole: me.role,
+      ip: req.ip,
+      meta: { keys: ['emailTemplates'], templateKey: params.key, fields },
+    });
+    return { success: true, data: await getEmailTemplateSettings() };
   });
 
   // ---- general settings (round 17): PUT is a partial patch → full snapshot ----

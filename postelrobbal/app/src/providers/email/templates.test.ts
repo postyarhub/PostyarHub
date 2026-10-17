@@ -17,6 +17,42 @@ describe('Postyar email template', () => {
     expect(rendered.html).not.toContain('<script>');
   });
 
+
+  it('uses the official hosted brand mark and Vazirmatn font stack', () => {
+    const rendered = renderEmailTemplate({
+      templateKey: 'registration',
+      subject: 'موضوع',
+      preheader: 'پیش‌نمایش',
+      title: 'عنوان',
+      paragraphs: ['متن پیام'],
+    }, 'https://postyarhub.ir');
+    expect(rendered.html).toContain('https://postyarhub.ir/icons/icon-512x512.png');
+    expect(rendered.html).toContain('Vazirmatn-Regular.woff2');
+    expect(rendered.html).toContain('font-family:Vazirmatn');
+    expect(rendered.subject).toBe('موضوع');
+  });
+
+  it('applies safe editable overrides and preserves dynamic placeholders', () => {
+    const rendered = renderEmailTemplate({
+      templateKey: 'password_reset',
+      subject: 'بازیابی رمز',
+      preheader: 'پیام',
+      title: 'عنوان پیش‌فرض',
+      paragraphs: ['مبلغ تراکنش'],
+      details: [{ label: 'مبلغ', value: '۱۲۳ ریال' }],
+    }, 'https://postyarhub.ir', {
+      password_reset: {
+        subject: 'امنیت حساب: {{subject}}',
+        title: '<b>{{title}}</b>',
+        paragraphs: 'جزئیات: {{detail:مبلغ}}',
+      },
+    });
+    expect(rendered.subject).toBe('امنیت حساب: بازیابی رمز');
+    expect(rendered.html).toContain('&lt;b&gt;عنوان پیش‌فرض&lt;/b&gt;');
+    expect(rendered.html).toContain('جزئیات: ۱۲۳ ریال');
+    expect(rendered.html).not.toContain('<b>عنوان پیش‌فرض</b>');
+  });
+
   it('allows only same-origin root-relative call-to-action links', () => {
     const base = {
       subject: 'مشاهده',

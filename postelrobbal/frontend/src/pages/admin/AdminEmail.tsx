@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, PageLoading } from '../../components/ui';
 import { toLatinDigits } from '../../lib/format';
 import { useToast } from '../../lib/toast';
 import { boolField, errText, strField, Toggle } from './shared';
+import AdminEmailTemplates from './AdminEmailTemplates';
 
 /* ------------------------------------------------------------------ */
 /* ایمیل — SMTP settings + test email sender (Task 16-b).              */
@@ -193,6 +194,7 @@ export default function AdminEmail() {
           </div>
         )}
       </Card>
+      <AdminEmailTemplates />
     </>
   );
 }

@@ -5,7 +5,7 @@ import { loadEnv } from '../../config/env.js';
 import { createLogger } from '../../core/logger.js';
 import { enqueue } from '../../queue/queues.js';
 import { getEmailSettings } from '../admin/system-settings.service.js';
-import type { EmailNotificationPayload, EmailTemplateInput } from '../../providers/email/templates.js';
+import type { EmailNotificationPayload, EmailTemplateInput, EmailTemplateKey } from '../../providers/email/templates.js';
 
 const log = createLogger('email-notifications');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -45,10 +45,26 @@ function validRecipient(value: string): boolean {
   return value.length <= 190 && EMAIL_RE.test(value) && !/[\r\n]/.test(value);
 }
 
-async function queueNotice(to: string, key: string, input: EmailTemplateInput): Promise<void> {
+function templateKeyForNotice(key: string): EmailTemplateKey {
+  if (key.startsWith('registered:')) return 'registration';
+  if (key.startsWith('payment-failed:')) return 'payment_failed';
+  if (key.startsWith('wallet-topup:')) return 'payment_success';
+  if (key.startsWith('subscription:')) return 'subscription';
+  if (key.startsWith('ticket-created-user:')) return 'ticket_created';
+  if (key.startsWith('ticket-staff:')) return 'ticket_reply';
+  return 'generic';
+}
+
+async function queueNotice(
+  to: string,
+  key: string,
+  input: EmailTemplateInput,
+  templateKey: EmailTemplateKey = templateKeyForNotice(key),
+): Promise<void> {
   if (!validRecipient(to)) return;
   const payload: EmailNotificationPayload = {
     kind: 'EMAIL_NOTIFICATION',
+    templateKey,
     to,
     subject: safeSubject(input.subject),
     preheader: input.preheader.slice(0, 180),
@@ -81,7 +97,7 @@ async function queueStaffNotice(
     .limit(50);
   for (const member of staff) {
     if (!validRecipient(member.email)) continue;
-    await queueNotice(member.email, key + ':' + member.id, input);
+    await queueNotice(member.email, key + ':' + member.id, input, 'admin_alert');
   }
 }
 
