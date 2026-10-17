@@ -13,6 +13,7 @@ import { Avatar } from '../components/Avatar';
 import { avatarPhotoUrl } from '../lib/api';
 import { ClockChip } from '../components/ClockChip';
 import HomeSurvey from '../components/HomeSurvey';
+import HomeFeedback from '../components/HomeFeedback';
 
 /* ------------------------------------------------------------------ */
 /* Landing shell — floating glass header + footer (Task 14-a)          */
@@ -133,6 +134,7 @@ export function LandingLayout() {
       <main style={{ flex: 1 }}>
         <Outlet />
         {location.pathname === '/' && <HomeSurvey />}
+        {location.pathname === '/' && <HomeFeedback />}
       </main>
 
       <footer className="ln-footer">
@@ -200,7 +202,7 @@ const NAV_ITEMS: Array<{ to: string; icon: NavIconName; label: string; short?: s
   { to: '/dashboard/ai', icon: 'ai', label: 'هوش مصنوعی' },
   { to: '/dashboard/woocommerce', icon: 'woocommerce', label: 'مدیریت وب‌سایت' },
   { to: '/dashboard/campaigns', icon: 'analytics', label: 'کمپین‌ها' },
-  { to: '/dashboard/surveys', icon: 'analytics', label: 'نظرسنجی‌ها', short: 'نظرسنجی' },
+  { to: '/dashboard/surveys', icon: 'analytics', label: 'نظرات و پیشنهادات', short: 'نظرات' },
   { to: '/dashboard/gold', icon: 'gold', label: 'ربات نرخ لحظه‌ای طلا و سکه', short: 'نرخ طلا' },
   { to: '/dashboard/analytics', icon: 'analytics', label: 'تحلیل آمار' },
   { to: '/dashboard/subscription', icon: 'subscription', label: 'اشتراک و پلن‌ها' },

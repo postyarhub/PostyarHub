@@ -368,6 +368,19 @@ export const channelSavedButtons = mysqlTable('channel_saved_buttons', {
   index('idx_channel_saved_buttons_scope').on(t.tenantId, t.channelId, t.createdAt),
 ]);
 
+export const channelSavedFooters = mysqlTable('channel_saved_footers', {
+  id: char('id', { length: 26 }).primaryKey(),
+  tenantId: char('tenant_id', { length: 26 }).notNull(),
+  channelId: char('channel_id', { length: 26 }).notNull(),
+  content: varchar('content', { length: 500 }).notNull(),
+  contentHash: char('content_hash', { length: 64 }).notNull(),
+  createdAt: ts(),
+  updatedAt: datetime('updated_at').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+}, (t) => [
+  unique('uq_channel_saved_footer_hash').on(t.tenantId, t.channelId, t.contentHash),
+  index('idx_channel_saved_footers_scope').on(t.tenantId, t.channelId, t.createdAt),
+]);
+
 export const postTargets = mysqlTable('post_targets', {
   id: char('id', { length: 26 }).primaryKey(),
   postId: char('post_id', { length: 26 }).notNull(),
@@ -899,3 +912,23 @@ export const surveyEvents = mysqlTable('survey_events', {
   note: varchar('note', { length: 500 }),
   createdAt: datetime('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (t) => [index('idx_survey_events_survey').on(t.surveyId, t.createdAt)]);
+
+
+// Authenticated user feedback. Public visibility requires both moderator approval and explicit user consent.
+export const userFeedback = mysqlTable('user_feedback', {
+  id: char('id', { length: 26 }).primaryKey(),
+  userId: char('user_id', { length: 26 }).notNull(),
+  displayName: varchar('display_name', { length: 80 }).notNull(),
+  message: text('message').notNull(),
+  showOnHomepage: tinyint('show_on_homepage').notNull().default(0),
+  status: mysqlEnum('status', ['PENDING', 'APPROVED', 'REJECTED', 'CLOSED']).notNull().default('PENDING'),
+  reviewedBy: char('reviewed_by', { length: 26 }),
+  reviewedAt: datetime('reviewed_at'),
+  reviewNote: varchar('review_note', { length: 500 }),
+  createdAt: datetime('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: datetime('updated_at').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+}, (t) => [
+  index('idx_user_feedback_user_created').on(t.userId, t.createdAt),
+  index('idx_user_feedback_status_created').on(t.status, t.createdAt),
+  index('idx_user_feedback_public').on(t.status, t.showOnHomepage, t.updatedAt),
+]);

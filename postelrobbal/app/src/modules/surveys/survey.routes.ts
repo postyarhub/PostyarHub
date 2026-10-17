@@ -106,6 +106,20 @@ async function featuredSurvey(voter: string | null) {
   };
 }
 
+async function withVoteStats(rows: SurveyRow[]) {
+  const items = await withOptions(rows);
+  if (!rows.length) return [];
+  const ids = rows.map((row) => row.id);
+  const grouped = await getDb().select({ optionId: surveyVotes.optionId, votes: count() }).from(surveyVotes)
+    .where(inArray(surveyVotes.surveyId, ids)).groupBy(surveyVotes.optionId);
+  const counts = new Map<string, number>(grouped.map((row) => [row.optionId, Number(row.votes ?? 0)] as const));
+  return items.map((item) => {
+    const options = item.options.map((option) => ({ ...option, voteCount: counts.get(option.id) ?? 0 }));
+    const totalVotes = options.reduce((sum, option) => sum + option.voteCount, 0);
+    return { ...item, totalVotes, options: options.map((option) => ({ ...option, percentage: totalVotes ? Math.round(option.voteCount * 100 / totalVotes) : 0 })) };
+  });
+}
+
 async function appendEvent(tx: any, surveyId: string, actorId: string | null, action: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'CLOSED', note: string | null = null) {
   await tx.insert(surveyEvents).values({ id: newId(), surveyId, actorId, action, note });
 }
@@ -164,6 +178,7 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
 
   app.post('/surveys', { preHandler: [app.requireAuth], config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (req, reply) => {
     if (!req.user) return sendError(reply, 401, 'AUTH_REQUIRED', 'برای ثبت نظرسنجی وارد حساب شوید.');
+    if (!isSuperAdmin(req)) return sendError(reply, 403, 'FORBIDDEN', 'ساخت نظرسنجی فقط برای مدیر ارشد مجاز است.');
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return sendError(reply, 400, 'VALIDATION_ERROR', 'سؤال باید حداقل ۸ نویسه و تعداد گزینه‌ها بین ۲ تا ۸ باشد؛ متن گزینه‌ها نیز باید یکتا باشد.');
     const db = getDb();
@@ -211,7 +226,7 @@ export async function registerSurveyRoutes(app: FastifyInstance): Promise<void> 
   app.get('/surveys/admin', { preHandler: [app.requireAuth] }, async (req, reply) => {
     if (!isSuperAdmin(req)) return sendError(reply, 403, 'FORBIDDEN', 'دسترسی مدیر ارشد لازم است.');
     const rows = await getDb().select().from(surveys).orderBy(desc(surveys.createdAt)).limit(100);
-    return { success: true, data: { items: await withOptions(rows) } };
+    return { success: true, data: { items: await withVoteStats(rows) } };
   });
 
   app.post('/surveys/admin/:id/approve', { preHandler: [app.requireAuth] }, async (req, reply) => {
