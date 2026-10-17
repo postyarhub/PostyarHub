@@ -194,7 +194,7 @@ export function renderEmailTemplate(
     ? '<p style="margin:20px 0 0;color:#68738b;font-size:12px;line-height:1.9;' + font + '">' + escapeHtml(effective.footerNote) + '</p>'
     : '';
   const preheader = escapeHtml(effective.preheader.slice(0, 180));
-  const logoUrl = base.origin + '/icons/icon-512x512.png';
+  const logoUrl = base.origin + '/email-assets/postyar-logo-mark.webp';
   const html = '<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>' +
     escapeHtml(subject) +
     '</title><style>' +
