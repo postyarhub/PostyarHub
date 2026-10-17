@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Card, Field, Input } from '../components/ui';
 import { api, ApiRequestError } from '../lib/api';
@@ -6,7 +6,11 @@ import { api, ApiRequestError } from '../lib/api';
 export default function ResetPasswordPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const token = params.get('token') ?? '';
+  // Keep the one-time secret in memory, then remove it from the address/history.
+  const [token] = useState(() => params.get('token') ?? '');
+  useEffect(() => {
+    if (token) window.history.replaceState(window.history.state, '', '/reset-password');
+  }, [token]);
   const [password, setPassword] = useState('');
   const [repeat, setRepeat] = useState('');
   const [busy, setBusy] = useState(false);
