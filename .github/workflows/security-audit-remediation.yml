@@ -8,6 +8,7 @@ on:
       - 'postelrobbal/frontend/**'
       - 'postelrobbal/wordpress-plugin/**'
       - '.github/workflows/security-audit-remediation.yml'
+      - '.github/workflows/postyar-security-release-bundle.yml'
   workflow_dispatch:
 
 permissions:

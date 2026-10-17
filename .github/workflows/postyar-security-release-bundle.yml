@@ -66,7 +66,7 @@ jobs:
           cp -a postelrobbal/frontend/dist "$RELEASE/postelrobbal/frontend/"
           cp -a postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json postelrobbal/frontend/vite.config.ts postelrobbal/frontend/tsconfig.json postelrobbal/frontend/index.html "$RELEASE/postelrobbal/frontend/"
 
-          cp -a postelrobbal/database/migrations "$RELEASE/postelrobbal/"
+          cp -a postelrobbal/database/migrations "$RELEASE/postelrobbal/database/"
 
           cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
           cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
