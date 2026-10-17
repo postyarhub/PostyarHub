@@ -10,6 +10,7 @@ const Terms = lazy(() => import('./pages/Terms'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Help = lazy(() => import('./pages/dashboard/Help'));
 const Surveys = lazy(() => import('./pages/dashboard/Surveys'));
+const Feedback = lazy(() => import('./pages/dashboard/Feedback'));
 const AdminSurveys = lazy(() => import('./pages/admin/AdminSurveys'));
 const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
 const Channels = lazy(() => import('./pages/dashboard/Channels'));
@@ -83,6 +84,7 @@ export function App() {
           <Route path="woocommerce" element={<WooCommerce />} />
           <Route path="campaigns" element={<Campaigns />} />
           <Route path="surveys" element={<Surveys />} />
+          <Route path="feedback" element={<Feedback />} />
           <Route path="gold" element={<Gold />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="subscription" element={<Subscription />} />
