@@ -35,10 +35,13 @@ async function runtimeMailConfig(): Promise<RuntimeConfigResult> {
   const settings = await getEmailSettings();
   if (!settings.enabled) return { reason: 'DISABLED' };
   const env = loadEnv();
-  const host = settings.host.trim() || (env.MAIL_HOST ?? '').trim();
-  const port = settings.host.trim() ? settings.port : (env.MAIL_PORT ?? settings.port);
-  const user = settings.user.trim() || (env.MAIL_USER ?? '').trim();
-  const pass = settings.pass || env.MAIL_PASSWORD || '';
+  // Treat database SMTP settings as one atomic configuration. Never combine
+  // credentials from an unrelated legacy .env sender with a newly entered host.
+  const useSettings = Boolean(settings.host.trim());
+  const host = useSettings ? settings.host.trim() : (env.MAIL_HOST ?? '').trim();
+  const port = useSettings ? settings.port : (env.MAIL_PORT ?? settings.port);
+  const user = useSettings ? settings.user.trim() : (env.MAIL_USER ?? '').trim();
+  const pass = useSettings ? settings.pass : (env.MAIL_PASSWORD ?? '');
   if (!host || !user || !pass) return { reason: 'NOT_CONFIGURED' };
 
   const secure = port === 465 ? true : port === 587 ? false : settings.secure;
@@ -50,7 +53,7 @@ async function runtimeMailConfig(): Promise<RuntimeConfigResult> {
       user,
       pass,
       fromName: settings.fromName.trim() || 'پُست‌یار',
-      fromEmail: settings.fromEmail.trim() || user,
+      fromEmail: (useSettings ? settings.fromEmail.trim() : '').trim() || user,
     },
   };
 }
