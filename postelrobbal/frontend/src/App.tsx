@@ -51,6 +51,7 @@ const AdminSettingsGold = lazy(() => import('./pages/admin/AdminSettingsGold'));
 const AdminSettingsReferral = lazy(() => import('./pages/admin/AdminSettingsReferral'));
 const AdminSettingsSecurity = lazy(() => import('./pages/admin/AdminSettingsSecurity'));
 const PaymentResult = lazy(() => import('./pages/PaymentResult'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 
 const AuthEntryPage = lazy(() => import('./pages/AuthEntryPage'));
 
@@ -60,6 +61,7 @@ export function App() {
       <Routes>
         <Route path="/login" element={<AuthEntryPage initialMode="login" />} />
         <Route path="/register" element={<AuthEntryPage initialMode="register" />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<LandingLayout />}>
           <Route path="/" element={<Landing />} />
           <Route path="/terms" element={<Terms />} />
