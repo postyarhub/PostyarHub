@@ -125,7 +125,7 @@ describe('Telegram media delivery payload', () => {
       Array<{ fieldName: string; filename: string; data: Buffer }>,
     ];
     expect(url).toBe('https://api.telegram.org/botTOKEN/sendMediaGroup');
-    const payload = JSON.parse(fields.media) as Array<{ type: string; media: string; caption?: string; parse_mode?: string }>;
+    const payload = JSON.parse(fields.media ?? '') as Array<{ type: string; media: string; caption?: string; parse_mode?: string }>;
     expect(payload).toEqual([
       { type: 'photo', media: 'attach://file0', caption: 'album caption', parse_mode: 'HTML' },
       { type: 'photo', media: 'attach://file1' },
