@@ -19,7 +19,7 @@ import { enqueue } from '../queue/queues.js';
 import { assertSafeUrl } from '../core/http.js';
 import { getProvider } from '../providers/index.js';
 import { decryptSecret } from '../security/encryption.js';
-import type { Platform, ProviderError } from '../providers/types.js';
+import { makeProviderError, type Platform, type ProviderError } from '../providers/types.js';
 import { outboxDispatcher } from './dispatcher.js';
 
 /**
@@ -339,34 +339,118 @@ async function deliverPost(targetId: string): Promise<void> {
       ? resolveUniqueDeliveryButtons(platform, inline)
       : [];
 
-    // Media is part of the user's publication request. Never silently send
-    // text-only when an attached media cannot be delivered.
-    let mediaPayload: Awaited<ReturnType<typeof resolveMediaForDelivery>> = null;
-    if (post.mediaId) {
+    // Preserve old records through the legacy mediaId fallback while the ordered
+    // collection is used for new multi-image posts.
+    const mediaIds = Array.isArray(post.mediaIds) && post.mediaIds.length > 0
+      ? [...new Set(post.mediaIds)]
+      : post.mediaId ? [post.mediaId] : [];
+    const mediaPayloads: Array<NonNullable<Awaited<ReturnType<typeof resolveMediaForDelivery>>>> = [];
+    if (mediaIds.length > 0) {
       if (!caps.sendMedia) {
         await finalizeFailure(target, post, channel, 'UNSUPPORTED_MEDIA', 'پلتفرم مقصد از ارسال این نوع رسانه پشتیبانی نمی‌کند.', false);
         return;
       }
-      mediaPayload = await resolveMediaForDelivery(post.tenantId, post.mediaId);
-      if (!mediaPayload) {
-        await finalizeFailure(target, post, channel, 'MEDIA_UNAVAILABLE', 'رسانهٔ پیوست‌شده دیگر قابل دسترسی یا قابل انتشار نیست.', false);
+      if (mediaIds.length > 10) {
+        await finalizeFailure(target, post, channel, 'MEDIA_COUNT_INVALID', 'تعداد تصاویر این پست بیش از حد مجاز است؛ پست را اصلاح کنید.', false);
+        return;
+      }
+      for (const mediaId of mediaIds) {
+        const payload = await resolveMediaForDelivery(post.tenantId, mediaId);
+        if (!payload) {
+          await finalizeFailure(target, post, channel, 'MEDIA_UNAVAILABLE', 'یکی از رسانه‌های پیوست‌شده دیگر قابل دسترسی یا قابل انتشار نیست.', false);
+          return;
+        }
+        mediaPayloads.push(payload);
+      }
+      if (mediaPayloads.length > 1 && mediaPayloads.some((item) => item.kind !== 'photo')) {
+        await finalizeFailure(target, post, channel, 'MEDIA_MIX_INVALID', 'ارسال چندرسانه‌ای فقط برای مجموعه‌ای از تصاویر پشتیبانی می‌شود؛ ویدئو را جداگانه ارسال کنید.', false);
+        return;
+      }
+      const totalBytes = mediaPayloads.reduce((sum, item) => sum + item.buffer.length, 0);
+      if (totalBytes > 20 * 1024 * 1024) {
+        await finalizeFailure(target, post, channel, 'MEDIA_ALBUM_TOO_LARGE', 'حجم مجموع تصاویر پس از آماده‌سازی بیش از ۲۰ مگابایت است؛ تعداد یا حجم تصاویر را کاهش دهید.', false);
         return;
       }
     }
 
-    const result =
-      mediaPayload !== null
-        ? await provider.sendMedia(token, {
+    let result;
+    if (mediaPayloads.length === 0) {
+      result = await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons });
+    } else if (
+      mediaPayloads.length >= 2 &&
+      mediaPayloads.every((item) => item.kind === 'photo') &&
+      inlineButtons.length === 0 &&
+      typeof provider.sendMediaGroup === 'function'
+    ) {
+      // Telegram and Bale support official media albums. Keep long text in a
+      // separate text message because media captions are limited to 1024 chars.
+      result = await provider.sendMediaGroup(token, {
+        chatRef: channel.channelRef,
+        text: text.length <= 1024 ? text : '',
+        parseMode,
+        media: mediaPayloads.map((item) => ({
+          buffer: item.buffer,
+          filename: item.filename,
+          mime: item.mime,
+        })),
+      });
+      if (text.length > 1024) {
+        try {
+          await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons: [] });
+        } catch (err) {
+          // Do not auto-retry and duplicate an album already accepted by the provider.
+          throw makeProviderError('UNKNOWN', 'تصاویر ارسال شدند، اما ارسال متن بلند کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
+        }
+      }
+    } else if (mediaPayloads.length === 1) {
+      const item = mediaPayloads[0]!;
+      result = await provider.sendMedia(token, {
+        chatRef: channel.channelRef,
+        text,
+        parseMode,
+        inlineButtons,
+        mediaBuffer: item.buffer,
+        mediaFilename: item.filename,
+        mediaMime: item.mime,
+        kind: item.kind,
+      });
+    } else {
+      // Rubika has no documented album method in its public Bot API, and
+      // albums with buttons are not supported by Telegram/Bale. Send each
+      // image through the existing official single-file method, only attaching
+      // the caption/buttons to the first image.
+      let firstResult: Awaited<ReturnType<typeof provider.sendMedia>> | null = null;
+      for (let index = 0; index < mediaPayloads.length; index += 1) {
+        const item = mediaPayloads[index]!;
+        try {
+          const sent = await provider.sendMedia(token, {
             chatRef: channel.channelRef,
-            text,
-            parseMode,
-            inlineButtons,
-            mediaBuffer: mediaPayload.buffer,
-            mediaFilename: mediaPayload.filename,
-            mediaMime: mediaPayload.mime,
-            kind: mediaPayload.kind,
-          })
-        : await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons });
+            text: index === 0 && text.length <= 1024 ? text : '',
+            parseMode: index === 0 && text.length <= 1024 ? parseMode : 'NONE',
+            inlineButtons: index === 0 ? inlineButtons : [],
+            mediaBuffer: item.buffer,
+            mediaFilename: item.filename,
+            mediaMime: item.mime,
+            kind: item.kind,
+          });
+          if (index === 0) firstResult = sent;
+        } catch (err) {
+          if (index === 0) throw err;
+          // Some earlier items have already been sent. Failing non-retryably
+          // prevents the worker from blindly re-sending duplicate media.
+          throw makeProviderError('UNKNOWN', 'بخشی از تصاویر ارسال شد، اما ارسال همهٔ تصاویر کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
+        }
+      }
+      if (text.length > 1024) {
+        try {
+          await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons: [] });
+        } catch (err) {
+          throw makeProviderError('UNKNOWN', 'تصاویر ارسال شدند، اما ارسال متن بلند کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
+        }
+      }
+      if (!firstResult) throw makeProviderError('UNKNOWN', 'پلتفرم شناسهٔ پیام معتبر برنگرداند.');
+      result = firstResult;
+    }
 
     await finalizeSuccess(target, post, channel, platform, result.messageId);
   } catch (err) {
