@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'postelrobbal/app/**'
+      - 'postelrobbal/database/migrations/**'
       - 'postelrobbal/frontend/**'
       - 'postelrobbal/api/package.json'
       - 'postelrobbal/api/package-lock.json'
@@ -52,7 +53,7 @@ jobs:
           OUT="$RUNNER_TEMP/postyar-release-output"
           STAGE="$RUNNER_TEMP/postyar-release-stage"
           RELEASE="$STAGE/POSTYAR-SECURITY-RELEASE-20261016"
-          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/wordpress-plugin"
+          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/database" "$RELEASE/postelrobbal/wordpress-plugin"
 
           # Source + exact compiled output. Never package node_modules, .env, logs, backups,
           # user files, runtime data, database files or host configuration.
@@ -64,6 +65,8 @@ jobs:
           cp -a postelrobbal/frontend/public "$RELEASE/postelrobbal/frontend/"
           cp -a postelrobbal/frontend/dist "$RELEASE/postelrobbal/frontend/"
           cp -a postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json postelrobbal/frontend/vite.config.ts postelrobbal/frontend/tsconfig.json postelrobbal/frontend/index.html "$RELEASE/postelrobbal/frontend/"
+
+          cp -a postelrobbal/database/migrations "$RELEASE/postelrobbal/"
 
           cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
           cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
