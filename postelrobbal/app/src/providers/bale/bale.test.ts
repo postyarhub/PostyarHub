@@ -120,5 +120,36 @@ describe('Bale request encoding and inline keyboard payload', () => {
       inlineButtons: [{ label: 'phone', url: 'tel:+989121234567' }],
     })).rejects.toMatchObject({ providerClass: 'VALIDATION' });
     expect(httpJsonMock).not.toHaveBeenCalled();
+  }); 
+  it('sends multiple photos through Bale sendMediaGroup using multipart attached files', async () => {
+    httpMultipartJsonMock.mockResolvedValue({
+      status: 200,
+      data: { ok: true, result: [{ message_id: 456 }, { message_id: 457 }] },
+    });
+    const adapter = new BaleAdapter();
+    const result = await adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: 'آلبوم',
+      media: [
+        { buffer: Buffer.from('photo-one'), filename: 'one.jpg', mime: 'image/jpeg' },
+        { buffer: Buffer.from('photo-two'), filename: 'two.jpg', mime: 'image/jpeg' },
+      ],
+    });
+
+    expect(result.messageId).toBe('456');
+    const [url, fields, files] = httpMultipartJsonMock.mock.calls[0] as [
+      string, Record<string, string>, Array<{ fieldName: string; filename: string; data: Buffer }>
+    ];
+    expect(url).toContain('/sendMediaGroup');
+    expect(fields.chat_id).toBe('-100123');
+    const media = JSON.parse(fields.media ?? '[]') as Array<{ type: string; media: string; caption?: string }>;
+    expect(media).toEqual([
+      { type: 'photo', media: 'attach://file0', caption: 'آلبوم' },
+      { type: 'photo', media: 'attach://file1' },
+    ]);
+    expect(files.map((file) => [file.fieldName, file.filename])).toEqual([
+      ['file0', 'one.jpg'], ['file1', 'two.jpg'],
+    ]);
   });
+
 });
