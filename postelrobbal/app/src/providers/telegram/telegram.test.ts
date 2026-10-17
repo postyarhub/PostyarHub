@@ -102,6 +102,41 @@ describe('Telegram media delivery payload', () => {
     expect(httpMultipartJsonMock).not.toHaveBeenCalled();
   });
 
+  it('uploads two photos through sendMediaGroup as one album', async () => {
+    httpMultipartJsonMock.mockResolvedValueOnce({
+      status: 200,
+      data: { ok: true, result: [{ message_id: 101 }, { message_id: 102 }] },
+    });
+    const adapter = new TelegramAdapter();
+    const result = await adapter.sendMediaGroup('TOKEN', {
+      chatRef: '-100123',
+      text: 'album caption',
+      parseMode: 'HTML',
+      media: [
+        { buffer: Buffer.from('photo-one'), filename: 'one.jpg', mime: 'image/jpeg' },
+        { buffer: Buffer.from('photo-two'), filename: 'two.jpg', mime: 'image/jpeg' },
+      ],
+    });
+
+    expect(result).toEqual({ ok: true, messageId: '101' });
+    const [url, fields, files] = httpMultipartJsonMock.mock.calls[0] as [
+      string,
+      Record<string, string>,
+      Array<{ fieldName: string; filename: string; data: Buffer }>,
+    ];
+    expect(url).toBe('https://api.telegram.org/botTOKEN/sendMediaGroup');
+    const payload = JSON.parse(fields.media) as Array<{ type: string; media: string; caption?: string; parse_mode?: string }>;
+    expect(payload).toEqual([
+      { type: 'photo', media: 'attach://file0', caption: 'album caption', parse_mode: 'HTML' },
+      { type: 'photo', media: 'attach://file1' },
+    ]);
+    expect(files).toHaveLength(2);
+    expect(files.map((file) => [file.fieldName, file.filename])).toEqual([
+      ['file0', 'one.jpg'],
+      ['file1', 'two.jpg'],
+    ]);
+  });
+
   it('rejects an unsupported button scheme before provider send', async () => {
     const adapter = new TelegramAdapter();
     await expect(adapter.sendText('TOKEN', {
