@@ -6,6 +6,8 @@ import { audit } from '../../core/audit.js';
 import { AI_PROVIDER_IDS, BUILTIN_AI_PROVIDERS } from '../../providers/ai/ai-providers.js';
 import { encryptSecret, decryptSecret } from '../../security/encryption.js';
 import nodemailer from 'nodemailer';
+import { loadEnv } from '../../config/env.js';
+import { EMAIL_TEMPLATE_KEYS, renderEmailTemplate, type EmailTemplateKey, type EmailTemplateOverride, type EmailTemplateSettings } from '../../providers/email/templates.js';
 
 /**
  * System settings for the admin panel v2 — SMS + SMTP email.
@@ -327,8 +329,68 @@ export async function putEmailSettings(patch: EmailSettingsPatch): Promise<strin
   return updated;
 }
 
+/* ---------------------------------------------------------------------------
+ * Editable transactional-email content. Stored under one system_settings key;
+ * no schema migration is required. HTML is never accepted from the admin UI.
+ * ------------------------------------------------------------------------- */
+
+const EMAIL_TEMPLATE_FIELDS = ['subject', 'preheader', 'title', 'greeting', 'paragraphs', 'buttonLabel', 'footerNote'] as const;
+type EmailTemplateField = (typeof EMAIL_TEMPLATE_FIELDS)[number];
+const EMAIL_TEMPLATE_LIMITS: Record<EmailTemplateField, number> = {
+  subject: 190,
+  preheader: 180,
+  title: 160,
+  greeting: 180,
+  paragraphs: 4000,
+  buttonLabel: 100,
+  footerNote: 300,
+};
+
+export async function getEmailTemplateSettings(): Promise<EmailTemplateSettings> {
+  const stored = await readSettingDoc('emailTemplates');
+  const result: EmailTemplateSettings = {};
+  for (const key of EMAIL_TEMPLATE_KEYS) {
+    const source = stored[key];
+    if (!isRecord(source)) continue;
+    const output: EmailTemplateOverride = {};
+    for (const field of EMAIL_TEMPLATE_FIELDS) {
+      const value = source[field];
+      if (typeof value === 'string' && value.length <= EMAIL_TEMPLATE_LIMITS[field]) {
+        output[field] = value;
+      }
+    }
+    if (Object.keys(output).length > 0) result[key] = output;
+  }
+  return result;
+}
+
+export async function putEmailTemplateSettings(
+  key: EmailTemplateKey,
+  patch: EmailTemplateOverride,
+): Promise<string[]> {
+  if (!(EMAIL_TEMPLATE_KEYS as readonly string[]).includes(key)) {
+    throw new AppError(ERR.VALIDATION('قالب ایمیل انتخاب‌شده معتبر نیست.'));
+  }
+  const current = await getEmailTemplateSettings();
+  const next: EmailTemplateSettings = { ...current, [key]: { ...(current[key] ?? {}) } };
+  const output = next[key] as EmailTemplateOverride;
+  const updated: string[] = [];
+  for (const field of EMAIL_TEMPLATE_FIELDS) {
+    const value = patch[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.length > EMAIL_TEMPLATE_LIMITS[field]) {
+      throw new AppError(ERR.VALIDATION('یکی از فیلدهای قالب ایمیل بیش از حد مجاز است.'));
+    }
+    output[field] = field === 'paragraphs' ? value.trim() : value.trim().replace(/[\r\n]+/g, ' ');
+    updated.push(field);
+  }
+  await upsertSetting('emailTemplates', next as unknown as Record<string, unknown>);
+  return updated;
+}
+
 /**
  * Sends a test email through the SAVED SMTP settings (nodemailer).
+
  * Never leaks credentials in errors — only the SMTP response line is surfaced.
  */
 export async function sendTestEmail(actorId: string, to: string): Promise<{ ok: true; messageId: string }> {
@@ -349,12 +411,23 @@ export async function sendTestEmail(actorId: string, to: string): Promise<{ ok: 
     socketTimeout: 20_000,
   });
   try {
+    const rendered = renderEmailTemplate({
+      templateKey: 'test_email',
+      subject: 'ایمیل آزمایشی پُست‌یار',
+      preheader: 'بررسی نهایی اتصال ایمیل پُست‌یار.',
+      title: 'ارسال ایمیل آماده است',
+      greeting: 'سلام،',
+      paragraphs: ['تنظیمات SMTP با موفقیت آزموده شد. اگر این پیام را دریافت کرده‌اید، ارسال ایمیل پُست‌یار کار می‌کند.'],
+      buttonLabel: 'ورود به پنل پُست‌یار',
+      buttonPath: '/login',
+      footerNote: 'این پیام فقط برای بررسی تنظیمات ارسال شده است.',
+    }, loadEnv().APP_URL, await getEmailTemplateSettings());
     const info = await transport.sendMail({
       from: { name: settings.fromName, address: settings.fromEmail || settings.user },
       to,
-      subject: 'ایمیل آزمایشی پُست‌یار',
-      text: 'تنظیمات SMTP پُست‌یار با موفقیت آزموده شد. اگر این ایمیل را دریافت کرده‌اید، ارسال ایمیل فعال است.',
-      html: '<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><body dir="rtl" style="margin:0;background:#f1f5f9;font-family:Tahoma,Arial,sans-serif;padding:28px 10px;"><table role="presentation" width="100%" style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5eaf3;border-radius:16px;padding:28px;"><tr><td style="color:#172554;font-size:22px;font-weight:800;">پُست‌یار</td></tr><tr><td style="padding-top:20px;color:#172033;font-size:20px;font-weight:700;">ایمیل آزمایشی پُست‌یار</td></tr><tr><td style="padding-top:14px;color:#475569;font-size:15px;line-height:1.9;">تنظیمات SMTP با موفقیت آزموده شد. اگر این پیام را دریافت کرده‌اید، ارسال ایمیل پُست‌یار کار می‌کند.</td></tr></table></body></html>',
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
     });
     await audit({ action: 'admin.email_test', actorId, meta: { to } });
     return { ok: true, messageId: String(info.messageId ?? '') };
