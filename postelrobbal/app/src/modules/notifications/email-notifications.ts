@@ -31,11 +31,10 @@ async function mailConfigured(): Promise<boolean> {
   const settings = await getEmailSettings();
   if (!settings.enabled) return false;
   const env = loadEnv();
-  return Boolean(
-    (settings.host.trim() || env.MAIL_HOST?.trim()) &&
-    (settings.user.trim() || env.MAIL_USER?.trim()) &&
-    (settings.pass || env.MAIL_PASSWORD)
-  );
+  const useSettings = Boolean(settings.host.trim());
+  return Boolean(useSettings
+    ? (settings.host.trim() && settings.user.trim() && settings.pass)
+    : ((env.MAIL_HOST ?? '').trim() && (env.MAIL_USER ?? '').trim() && env.MAIL_PASSWORD));
 }
 
 function safeSubject(value: string): string {
@@ -69,12 +68,16 @@ async function queueNotice(to: string, key: string, input: EmailTemplateInput): 
   });
 }
 
-async function queueStaffNotice(key: string, input: EmailTemplateInput): Promise<void> {
+async function queueStaffNotice(
+  key: string,
+  input: EmailTemplateInput,
+  roles: Array<'SUPER_ADMIN' | 'SUPPORT'> = ['SUPER_ADMIN'],
+): Promise<void> {
   const db = getDb();
   const staff = await db
     .select({ id: users.id, email: users.email })
     .from(users)
-    .where(and(inArray(users.role, ['SUPER_ADMIN', 'SUPPORT']), eq(users.status, 'ACTIVE')))
+    .where(and(inArray(users.role, roles), eq(users.status, 'ACTIVE')))
     .limit(50);
   for (const member of staff) {
     if (!validRecipient(member.email)) continue;
@@ -321,7 +324,7 @@ export async function notifyTicketEmail(input: {
         details: [...details, { label: 'نام کاربر', value: name }, { label: 'ایمیل کاربر', value: ticket.email }],
         buttonLabel: 'مشاهده تیکت در مدیریت',
         buttonPath: '/dashboard/admin/tickets',
-      });
+      }, ['SUPER_ADMIN', 'SUPPORT']);
       return;
     }
 
