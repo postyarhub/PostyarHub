@@ -45,6 +45,19 @@ jobs:
           npm ci
           npm run build
 
+      - name: Verify reset, branding and migration release inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f postelrobbal/frontend/public/email-assets/postyar-logo-mark.webp
+          test -f postelrobbal/frontend/dist/email-assets/postyar-logo-mark.webp
+          test -f postelrobbal/database/migrations/0045_post_media_ids.sql
+          grep -Fq 'RewriteRule ^reset-password/?$ /index.html [L]' postelrobbal/frontend/public/.htaccess
+          grep -Fq 'POSTYAR-GEO-OFFICIAL-ENTITY-SAMEAS-R1.1-20261014' postelrobbal/frontend/dist/index.html
+          grep -Fq 'runtime-recovery.js' postelrobbal/frontend/dist/index.html
+          grep -Fq 'password_reset_delivery_enqueued' postelrobbal/app/dist/modules/auth/auth.service.js
+          grep -Fq 'password_reset_email_accepted_by_smtp' postelrobbal/app/dist/workers/notification.worker.js
+
       - name: Assemble release bundle and integrity manifests
         shell: bash
         run: |
