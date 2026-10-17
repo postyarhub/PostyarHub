@@ -157,11 +157,15 @@ async function resolvePostMediaIds(
   if (mediaIds.length === 0) return { mediaIds: [], mediaId: null };
 
   const rows = await getDb()
-    .select({ id: media.id, mime: media.mime })
+    .select({ id: media.id, mime: media.mime, sizeBytes: media.sizeBytes })
     .from(media)
     .where(and(eq(media.tenantId, tenantId), inArray(media.id, mediaIds)));
   if (rows.length !== mediaIds.length) {
     throw new AppError(ERR.VALIDATION('یکی از رسانه‌های انتخاب‌شده معتبر نیست یا به حساب شما تعلق ندارد.'));
+  }
+  const totalStoredBytes = rows.reduce((sum, row) => sum + row.sizeBytes, 0);
+  if (totalStoredBytes > 20 * 1024 * 1024) {
+    throw new AppError(ERR.VALIDATION('حجم مجموع تصاویر یک پست نباید بیشتر از ۲۰ مگابایت باشد.'));
   }
   const videos = rows.filter((row) => row.mime === 'video/mp4');
   if (rows.some((row) => !(row.mime.startsWith('image/') || row.mime === 'video/mp4'))) {
