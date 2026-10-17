@@ -3,6 +3,7 @@ import { events, eventDaily } from '../db/schema.js';
 import { newId } from './ids.js';
 import { sql } from 'drizzle-orm';
 import { recordAnalyticsEvent } from '../modules/analytics/analytics.service.js';
+import { enqueue } from '../queue/queues.js';
 
 /**
  * Analytics event emission (§24, §165). No credentials/tokens/secrets in props.
@@ -24,6 +25,8 @@ export const ALLOWED_EVENTS = new Set<string>([
   'payment.created', 'payment.completed', 'payment.failed',
   'wallet.credit', 'wallet.debit', 'referral.created', 'referral.rewarded',
 ]);
+
+const EMAIL_EVENT_NAMES = new Set(['user.registration', 'payment.completed', 'payment.failed', 'subscription.created', 'subscription.renewed', 'subscription.expiring', 'subscription.expired']);
 
 export function sanitizeProps(props: Record<string, unknown> | undefined): Record<string, unknown> | null {
   if (!props) return null;
@@ -47,14 +50,33 @@ export async function emitEvent(input: {
   if (!ALLOWED_EVENTS.has(input.name)) return;
   const db = getDb();
   const tenantId = input.tenantId ?? null;
+  const eventId = newId();
   await db.insert(events).values({
-    id: newId(),
+    id: eventId,
     tenantId,
     name: input.name,
     subjectType: input.subjectType ?? null,
     subjectId: input.subjectId ?? null,
     propsJson: sanitizeProps(input.props),
   });
+
+  // Enqueue a small event record only. Recipient lookup and SMTP delivery
+  // happen in the notification worker and cannot hold a business request open.
+  if (EMAIL_EVENT_NAMES.has(input.name)) {
+    try {
+      await enqueue('notifications', 'business-email-event', {
+        eventId,
+        name: input.name,
+        tenantId,
+        subjectId: input.subjectId,
+        props: sanitizeProps(input.props) ?? {},
+      }, { jobId: 'business-email-event:' + eventId });
+    } catch (err) {
+      const code = typeof (err as { code?: unknown })?.code === 'string'
+        ? String((err as { code: string }).code).slice(0, 40) : 'QUEUE_ERROR';
+      console.warn('[email-notifications] event enqueue failed', { eventName: input.name, reason: code });
+    }
+  }
   if (tenantId) {
     const day = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
     await db
