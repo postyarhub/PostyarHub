@@ -1,7 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { assertSafeUrl, HttpJsonParseError } from './http.js';
+import { assertSafeUrl, encodeMultipartBody, HttpJsonParseError } from './http.js';
 
 describe('hardened outbound HTTP boundaries', () => {
+  it('encodes multiple multipart files with distinct attachment names and caps the count', () => {
+    const encoded = encodeMultipartBody({ chat_id: '-100', media: '[{"media":"attach://file0"},{"media":"attach://file1"}]' }, [
+      { fieldName: 'file0', filename: 'one.jpg', contentType: 'image/jpeg', data: Buffer.from('photo-one') },
+      { fieldName: 'file1', filename: 'two.jpg', contentType: 'image/jpeg', data: Buffer.from('photo-two') },
+    ]);
+    const body = encoded.body.toString('utf8');
+    expect(encoded.contentType).toMatch(/^multipart\/form-data; boundary=----PostYarBoundary/);
+    expect(body).toContain('name="chat_id"');
+    expect(body).toContain('attach://file0');
+    expect(body).toContain('name="file0"; filename="one.jpg"');
+    expect(body).toContain('name="file1"; filename="two.jpg"');
+    expect(body).toContain('photo-one');
+    expect(body).toContain('photo-two');
+    expect(body.endsWith('--' + encoded.contentType.split('boundary=')[1] + '--\r\n')).toBe(true);
+    expect(() => encodeMultipartBody({}, Array.from({ length: 11 }, (_, index) => ({
+      fieldName: `file${index}`, filename: `${index}.jpg`, contentType: 'image/jpeg', data: Buffer.from('x'),
+    })))).toThrow('MULTIPART_FILE_COUNT_INVALID');
+  });
+
   it('rejects loopback and private IP addresses before network access', async () => {
     await expect(assertSafeUrl('http://127.0.0.1/resource')).rejects.toThrow();
     await expect(assertSafeUrl('http://192.168.1.20/resource')).rejects.toThrow();
