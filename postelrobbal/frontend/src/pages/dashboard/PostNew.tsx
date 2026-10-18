@@ -683,6 +683,24 @@ export default function PostNew() {
             </label>
           )}
         </Field>
+        {mediaItems.length > 1 && selectedChannels.some((channel) => channel.platform === 'rubika') && (
+          <p role="status" aria-live="polite" style={{ margin: '8px 0 0', color: 'var(--text-2)', fontSize: 12, lineHeight: 1.9 }}>
+            در روبیکا، API رسمی ارسال آلبوم یکپارچه ندارد؛ تصاویر به‌ترتیب در پیام‌های جداگانه فرستاده می‌شوند. اگر متن بیشتر از ۱۰۲۴ نویسه باشد، پس از تصاویر در یک پیام جداگانه ارسال خواهد شد.
+          </p>
+        )}
+        {mediaItems.length > 1 && selectedChannels.some((channel) =>
+          (channel.platform === 'telegram' || channel.platform === 'bale') &&
+          (buttonsByChannel[channel.id] ?? []).some((row) => row.label.trim() && normalizeButtonTarget(row.targetType, row.value))
+        ) && (
+          <p role="status" aria-live="polite" style={{ margin: '8px 0 0', color: 'var(--text-2)', fontSize: 12, lineHeight: 1.9 }}>
+            برای نگه‌داشتن دکمه‌ها در تلگرام یا بله، تصاویر به‌صورت پیام‌های جداگانه ارسال می‌شوند و دکمه‌ها فقط روی تصویر اول قرار می‌گیرند.
+          </p>
+        )}
+        {mediaItems.length > 1 && body.trim().length > 1024 && selectedChannels.some((channel) => channel.platform === 'telegram' || channel.platform === 'bale') && (
+          <p role="status" aria-live="polite" style={{ margin: '8px 0 0', color: 'var(--text-2)', fontSize: 12, lineHeight: 1.9 }}>
+            در تلگرام و بله، متن بیشتر از ۱۰۲۴ نویسه همراه آلبوم جا نمی‌گیرد و بعد از تصاویر در یک پیام جداگانه ارسال می‌شود.
+          </p>
+        )}
       </Card>
       )}
 
