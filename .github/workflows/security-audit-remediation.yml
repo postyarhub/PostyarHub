@@ -30,7 +30,9 @@ jobs:
       - name: Install dependencies
         working-directory: postelrobbal/app
         run: npm ci
-      - name: Dependency vulnerability gate
+      - id: audit
+        name: Dependency vulnerability gate
+        continue-on-error: true
         working-directory: postelrobbal/app
         shell: bash
         run: |
@@ -62,6 +64,12 @@ jobs:
       - name: Compile backend
         working-directory: postelrobbal/app
         run: npm run build
+      - name: Enforce dependency vulnerability gate after code checks
+        if: always() && steps.audit.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Dependency audit still reports advisories. Code checks ran for diagnosis; merge and release remain blocked."
+          exit 1
 
   wordpress-plugin:
     name: WordPress connector PHP syntax
@@ -200,7 +208,9 @@ jobs:
       - name: Install dependencies
         working-directory: postelrobbal/frontend
         run: npm ci
-      - name: Dependency vulnerability gate
+      - id: audit
+        name: Dependency vulnerability gate
+        continue-on-error: true
         working-directory: postelrobbal/frontend
         shell: bash
         run: |
@@ -226,6 +236,12 @@ jobs:
       - name: Build
         working-directory: postelrobbal/frontend
         run: npm run build
+      - name: Enforce dependency vulnerability gate after code checks
+        if: always() && steps.audit.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Dependency audit still reports advisories. Frontend build ran for diagnosis; merge and release remain blocked."
+          exit 1
 
   release-integrity:
     name: Release scripts syntax and WordPress archive integrity
