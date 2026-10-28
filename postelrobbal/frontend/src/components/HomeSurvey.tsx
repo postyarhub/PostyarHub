@@ -6,7 +6,7 @@ type PublicOption = { id: string; label: string; sortOrder: number; voteCount: n
 type PublicSurvey = { id: string; question: string; description: string | null; createdAt: string; options: PublicOption[]; totalVotes: number; hasVoted: boolean };
 function errorMessage(error: unknown): string { return error instanceof ApiRequestError ? error.message : 'ثبت رأی انجام نشد. چند لحظه بعد دوباره تلاش کنید.'; }
 
-export default function HomeSurvey() {
+export default function HomeSurvey({ showEmptyState = false }: { showEmptyState?: boolean }) {
   const [survey, setSurvey] = useState<PublicSurvey | null>(null);
   const [choice, setChoice] = useState('');
   const [loading, setLoading] = useState(true);
@@ -33,7 +33,25 @@ export default function HomeSurvey() {
       }
     } finally { setSending(false); }
   }
-  if (loading || !survey) return null;
+  if (loading) {
+    return showEmptyState ? (
+      <section className="py-survey-wrap" aria-live="polite">
+        <div className="py-survey-card"><p>در حال بررسی نظرسنجی فعال…</p></div>
+      </section>
+    ) : null;
+  }
+  if (!survey) {
+    return showEmptyState ? (
+      <section className="py-survey-wrap" aria-labelledby="py-survey-empty-title">
+        <div className="py-survey-card">
+          <div className="py-survey-intro">
+            <h2 id="py-survey-empty-title">در حال حاضر نظرسنجی فعالی وجود ندارد</h2>
+            <p>در صورت انتشار نظرسنجی جدید توسط مدیر پُست‌یار، این بخش در دسترس قرار می‌گیرد.</p>
+          </div>
+        </div>
+      </section>
+    ) : null;
+  }
   return <section className="py-survey-wrap" aria-labelledby="py-survey-title"><div className="py-survey-card">
     <div className="py-survey-intro"><span className="py-survey-kicker"><span className="py-survey-live-dot" /> صدای شما مهم است</span><h2 id="py-survey-title">در نظرسنجی پُست‌یار شرکت کنید</h2><p>با انتخاب یک گزینه، به بهتر شدن تجربهٔ پُست‌یار کمک کنید.</p></div>
     <div className="py-survey-question"><h3>{survey.question}</h3>{survey.description && <p>{survey.description}</p>}
