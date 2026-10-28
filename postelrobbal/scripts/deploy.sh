@@ -47,7 +47,7 @@ die()  { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 preflight() {
   log "Preflight: tooling, directories, environment, dependencies"
 
-  for tool in curl rsync flock pgrep sed zip unzip; do
+  for tool in curl rsync flock pgrep sed unzip; do
     command -v "${tool}" >/dev/null 2>&1 || die "required tool not found in PATH: ${tool}"
   done
   NODE_BIN_PATH="$(cat "${APP_HOME}/config/node.bin" 2>/dev/null || true)"
