@@ -401,21 +401,48 @@ export default function Analytics() {
   );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [eventsLoadError, setEventsLoadError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setLoadError(null);
+    setEventsLoadError(null);
 
     (async () => {
       try {
-        const [s, ev] = await Promise.all([
+        const [summaryResult, eventsResult] = await Promise.allSettled([
           api.get<SummaryDto>('/api/v1/analytics/summary?days=30'),
           api.get<EventsDto>('/api/v1/analytics/events?limit=24'),
         ]);
 
-        const ids = (s.topPosts ?? []).slice(0, 5).map((post) => post.id);
+        if (summaryResult.status === 'rejected') throw summaryResult.reason;
+        const s = summaryResult.value;
+        if (!s || typeof s !== 'object' || !s.events || !Array.isArray(s.daily)) {
+          throw new ApiRequestError(
+            'INVALID_ANALYTICS_RESPONSE',
+            'ساختار پاسخ آمار از سرور معتبر نیست. شناسهٔ پیگیری را برای پشتیبانی ثبت کنید.',
+            502,
+          );
+        }
+
+        const ev = eventsResult.status === 'fulfilled' && Array.isArray(eventsResult.value?.events)
+          ? eventsResult.value
+          : { events: [], nextCursor: null };
+
+        if (eventsResult.status === 'rejected') {
+          const eventMessage = eventsResult.reason instanceof ApiRequestError
+            ? eventsResult.reason.message
+            : eventsResult.reason instanceof Error
+              ? `${eventsResult.reason.name}: ${eventsResult.reason.message}`
+              : 'دریافت فهرست فعالیت‌ها ناموفق بود.';
+          setEventsLoadError(eventMessage);
+        } else if (!Array.isArray(eventsResult.value?.events)) {
+          setEventsLoadError('ساختار پاسخ فهرست فعالیت‌ها معتبر نیست.');
+        }
+
+        const ids = (Array.isArray(s.topPosts) ? s.topPosts : []).slice(0, 5).map((post) => post.id);
         const details = await Promise.allSettled(
           ids.map(
             async (id) =>
@@ -439,8 +466,10 @@ export default function Analytics() {
         }
       } catch (error) {
         const message = error instanceof ApiRequestError
-          ? error.message
-          : 'دریافت آمار تحلیل ناموفق بود.';
+          ? `${error.message}${error.requestId ? ` (شناسهٔ پیگیری: ${error.requestId})` : ''}`
+          : error instanceof Error
+            ? `بارگذاری آمار با خطای ${error.name} مواجه شد: ${error.message}`
+            : 'دریافت آمار تحلیل ناموفق بود.';
         if (alive) setLoadError(message);
         toast.error(message);
       } finally {
@@ -924,6 +953,13 @@ export default function Analytics() {
         title="آخرین فعالیت‌ها"
         description="آخرین رویدادهای ثبت‌شده در حساب کاربری."
       >
+        {eventsLoadError ? (
+          <div role="status" className="analytics-v4-inline-warning" style={{ marginBottom: 12 }}>
+            <p style={{ margin: '0 0 8px' }}>فهرست فعالیت‌ها دریافت نشد؛ سایر آمار در صورت دسترس بودن همچنان نمایش داده می‌شوند.</p>
+            <small>{eventsLoadError}</small>
+            <div><button type="button" className="btn btn-ghost btn-sm" onClick={() => setRetryKey((value) => value + 1)}>تلاش مجدد</button></div>
+          </div>
+        ) : null}
         {events.length === 0 ? (
           <EmptyState
             icon="🧭"
