@@ -1,4 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
 import { parseWith } from '../../core/validation.js';
@@ -88,6 +90,54 @@ const campaignInputSchema = z.object({
 });
 
 export async function registerWordpressRoutes(app: FastifyInstance): Promise<void> {
+  // Authenticated download of the canonical plugin. The plan check is server-side;
+  // hiding the control in the UI is not an authorization boundary.
+  app.get('/wordpress/plugin-download', {
+    preHandler: [app.requireAuth],
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const me = auth(req);
+    await assertFeature(me.id, 'woocommerce');
+
+    const candidates = [
+      resolve(process.cwd(), '../wordpress-plugin/postyar-wordpress.zip'),
+      resolve(process.cwd(), 'wordpress-plugin/postyar-wordpress.zip'),
+    ];
+    let packagePath: string | null = null;
+    try {
+      for (const candidate of candidates) {
+        try {
+          const info = await stat(candidate);
+          if (info.isFile() && info.size >= 22 && info.size <= 25 * 1024 * 1024) {
+            packagePath = candidate;
+            break;
+          }
+        } catch {
+          // Try the next known release location without exposing host paths to clients.
+        }
+      }
+      if (!packagePath) {
+        req.log.error({ candidates }, 'wordpress_plugin_package_unavailable');
+        return fail(reply, 503, 'PLUGIN_PACKAGE_UNAVAILABLE', 'بستهٔ افزونه موقتاً در دسترس نیست؛ از راهنمای نصب استفاده کنید.');
+      }
+      const archive = await readFile(packagePath);
+      if (archive.byteLength < 22 || archive.byteLength > 25 * 1024 * 1024) {
+        return fail(reply, 503, 'PLUGIN_PACKAGE_INVALID', 'بستهٔ افزونه قابل استفاده نیست؛ لطفاً بعداً دوباره تلاش کنید.');
+      }
+      return reply
+        .header('Cache-Control', 'private, no-store, max-age=0')
+        .header('Pragma', 'no-cache')
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Content-Disposition', 'attachment; filename="postyar-wordpress.zip"')
+        .header('Content-Length', String(archive.byteLength))
+        .type('application/zip')
+        .send(archive);
+    } catch (error) {
+      req.log.error({ err: error }, 'wordpress_plugin_download_failed');
+      return fail(reply, 503, 'PLUGIN_PACKAGE_UNAVAILABLE', 'دریافت افزونه در حال حاضر ممکن نیست؛ لطفاً بعداً دوباره تلاش کنید.');
+    }
+  });
+
   // ---- tenant templates ----
   app.get('/templates/tags', { preHandler: [app.requireAuth] }, async () => ({ success: true, data: { tags: TEMPLATE_TAGS } }));
 
