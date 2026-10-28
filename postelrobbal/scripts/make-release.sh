@@ -70,6 +70,15 @@ if [ -f "${ROOT}/postelrobbal/config/.env.example" ] && [ ! -f "${STAGE}/postelr
   mkdir -p "${STAGE}/postelrobbal/config"
   cp "${ROOT}/postelrobbal/config/.env.example" "${STAGE}/postelrobbal/config/.env.example"
 fi
+# Build the gated dashboard-download archive from the canonical plugin tree only.
+PLUGIN_DIR="${STAGE}/postelrobbal/wordpress-plugin/postyar-wordpress"
+PLUGIN_ZIP="${STAGE}/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
+[ -d "$PLUGIN_DIR" ] || die "Canonical WordPress plugin directory missing: $PLUGIN_DIR"
+rm -f "$PLUGIN_ZIP"
+(cd "${STAGE}/postelrobbal/wordpress-plugin" && zip -qr "postyar-wordpress.zip" "postyar-wordpress") \
+  || die "Canonical WordPress plugin ZIP creation failed."
+unzip -tq "$PLUGIN_ZIP" >/dev/null || die "Canonical WordPress plugin ZIP failed integrity check."
+ok "Canonical WordPress plugin ZIP prepared for entitlement-gated download"
 ok "Staged into ${STAGE}"
 
 # ------------------------------------------------- 3. verify staging (gate)
