@@ -42,9 +42,16 @@ export default function AdminSurveys() {
     if (question.trim().length < 8 || clean.length < 2 || clean.length > 8 || new Set(clean.map((v) => v.toLocaleLowerCase('fa-IR'))).size !== clean.length) { setError('سؤال باید حداقل ۸ نویسه و گزینه‌ها باید بین ۲ تا ۸ مورد یکتا باشند.'); return; }
     setSaving(true);
     try {
-      await api.post('/api/v1/surveys', { question: question.trim(), description: description.trim(), options: clean });
-      setQuestion(''); setDescription(''); setOptions(['', '']); setNotice('نظرسنجی ساخته شد؛ برای نمایش عمومی آن را تأیید و فعال کنید.'); await load();
-    } catch (e) { setError(errorMessage(e)); }
+      const created = await api.post<{ survey: Poll }>('/api/v1/surveys', { question: question.trim(), description: description.trim(), options: clean });
+      const createdSurvey = created?.survey;
+      if (!createdSurvey?.id) {
+        throw new ApiRequestError('INVALID_SURVEY_RESPONSE', 'نظرسنجی ساخته شد اما شناسهٔ آن از سرور دریافت نشد. فهرست را تازه‌سازی و وضعیت را بررسی کنید.', 502);
+      }
+      await api.post(`/api/v1/surveys/admin/${createdSurvey.id}/approve`, {});
+      setQuestion(''); setDescription(''); setOptions(['', '']);
+      setNotice('نظرسنجی ساخته و منتشر شد؛ اکنون برای کاربران قابل مشاهده است.');
+      await load();
+    } catch (e) { setError(errorMessage(e)); await load(); }
     finally { setSaving(false); }
   }
   async function pollAction(item: Poll, action: 'approve' | 'reject' | 'close') {
