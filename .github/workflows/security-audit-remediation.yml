@@ -226,3 +226,33 @@ jobs:
       - name: Build
         working-directory: postelrobbal/frontend
         run: npm run build
+
+  release-integrity:
+    name: Release scripts syntax and WordPress archive integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate deployment and release shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in postelrobbal/scripts/deploy.sh postelrobbal/scripts/make-release.sh postelrobbal/scripts/release-check.sh; do
+            bash -n "$script"
+            echo "BASH_SYNTAX_OK $script"
+          done
+      - name: Package only the canonical WordPress plugin and verify the ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          mkdir -p "$temp_dir/postelrobbal/wordpress-plugin"
+          cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$temp_dir/postelrobbal/wordpress-plugin/"
+          (cd "$temp_dir/postelrobbal/wordpress-plugin" && zip -qr postyar-wordpress.zip postyar-wordpress)
+          unzip -tq "$temp_dir/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
+          if unzip -Z1 "$temp_dir/postelrobbal/wordpress-plugin/postyar-wordpress.zip" | grep -Ev '^postyar-wordpress(/|$)' >/dev/null; then
+            echo "Unexpected path outside canonical plugin root" >&2
+            exit 1
+          fi
+          echo "WORDPRESS_PLUGIN_ARCHIVE_OK"
