@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { AppError, ERR } from '../../core/errors.js';
@@ -107,7 +107,7 @@ export async function registerWordpressRoutes(app: FastifyInstance): Promise<voi
     try {
       for (const candidate of candidates) {
         try {
-          const info = await stat(candidate);
+          const info = await lstat(candidate);
           if (info.isFile() && info.size >= 22 && info.size <= 25 * 1024 * 1024) {
             packagePath = candidate;
             break;
