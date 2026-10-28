@@ -46,16 +46,25 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers['x-csrf-token'] = csrfToken;
   }
 
-  const res = await fetch(path, {
-    method: options.method ?? 'GET',
-    headers,
-    credentials: 'include',
-    body: options.formData
-      ? options.formData
-      : options.body !== undefined
-        ? JSON.stringify(options.body)
-        : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: options.method ?? 'GET',
+      headers,
+      credentials: 'include',
+      body: options.formData
+        ? options.formData
+        : options.body !== undefined
+          ? JSON.stringify(options.body)
+          : undefined,
+    });
+  } catch {
+    throw new ApiRequestError(
+      'NETWORK_ERROR',
+      'ارتباط با سرور برقرار نشد. اتصال را بررسی کرده و دوباره تلاش کنید.',
+      0,
+    );
+  }
 
   let payload: unknown = null;
   try {
