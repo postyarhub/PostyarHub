@@ -82,6 +82,27 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       err?.requestId
     );
   }
+  // A same-origin proxy or an expired runtime can return a successful HTTP
+  // status with an empty/non-JSON body. Do not let a null dereference in the
+  // caller collapse into the generic analytics error.
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ApiRequestError(
+      'INVALID_API_RESPONSE',
+      'پاسخ سرور قابل‌خواندن نیست. ممکن است سرویس موقتاً در دسترس نباشد؛ دوباره تلاش کنید.',
+      502,
+    );
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(payload, 'data')) {
+    const err = (payload as { error?: ApiError }).error;
+    throw new ApiRequestError(
+      'INVALID_API_RESPONSE',
+      err?.message ?? 'قالب پاسخ سرور با قرارداد API سازگار نیست. در صورت تکرار، این خطا را به پشتیبانی گزارش کنید.',
+      502,
+      err?.requestId,
+    );
+  }
+
   return (payload as { data: T }).data;
 }
 
