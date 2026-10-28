@@ -70,6 +70,8 @@ jobs:
 
           cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
           cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
+          (cd "$RELEASE/postelrobbal/wordpress-plugin" && zip -qr postyar-wordpress.zip postyar-wordpress)
+          unzip -tq "$RELEASE/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
 
           printf 'release_commit=%s\n' "$(git rev-parse HEAD)" > "$RELEASE/_release/metadata.txt"
           printf 'release_branch=%s\n' "${GITHUB_REF_NAME:-unknown}" >> "$RELEASE/_release/metadata.txt"
