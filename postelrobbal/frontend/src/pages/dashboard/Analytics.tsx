@@ -400,9 +400,13 @@ export default function Analytics() {
     {},
   );
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setLoadError(null);
 
     (async () => {
       try {
@@ -431,13 +435,14 @@ export default function Analytics() {
           setSummary(s);
           setEvents(ev.events ?? []);
           setPostDetails(map);
+          setLoadError(null);
         }
       } catch (error) {
-        toast.error(
-          error instanceof ApiRequestError
-            ? error.message
-            : 'دریافت آمار تحلیل ناموفق بود.',
-        );
+        const message = error instanceof ApiRequestError
+          ? error.message
+          : 'دریافت آمار تحلیل ناموفق بود.';
+        if (alive) setLoadError(message);
+        toast.error(message);
       } finally {
         if (alive) setLoading(false);
       }
@@ -446,7 +451,7 @@ export default function Analytics() {
     return () => {
       alive = false;
     };
-  }, [toast]);
+  }, [toast, retryKey]);
 
   const daily = useMemo(() => {
     const map = new Map<string, { total: number; breakdown: Map<string, number> }>();
@@ -490,8 +495,28 @@ export default function Analytics() {
       });
   }, [summary]);
 
-  if (loading || !summary) {
+  if (loading) {
     return <PageLoading />;
+  }
+
+  if (!summary) {
+    return (
+      <div className="analytics-v4-page">
+        <Card pad="lg" style={{ borderColor: 'var(--danger, #dc2626)' }}>
+          <h1 style={{ marginTop: 0 }}>تحلیل آمار در دسترس نیست</h1>
+          <p role="alert" style={{ lineHeight: 1.9 }}>
+            {loadError ?? 'دریافت اطلاعات تحلیل کامل نشد.'}
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setRetryKey((value) => value + 1)}
+          >
+            تلاش مجدد
+          </button>
+        </Card>
+      </div>
+    );
   }
 
   const platforms = (
