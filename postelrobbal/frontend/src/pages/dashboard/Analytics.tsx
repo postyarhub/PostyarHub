@@ -391,8 +391,9 @@ function Progress({
   );
 }
 
-function Ring({ value }: { value: number }) {
-  const percent = Math.min(100, Math.max(0, value));
+function Ring({ value }: { value: number | null }) {
+  const hasValue = value !== null && Number.isFinite(value);
+  const percent = hasValue ? Math.min(100, Math.max(0, value)) : 0;
 
   return (
     <div
@@ -402,7 +403,7 @@ function Ring({ value }: { value: number }) {
       }}
     >
       <div>
-        <strong>{number(percent)}٪</strong>
+        <strong>{hasValue ? `${number(percent)}٪` : '—'}</strong>
         <span>موفقیت</span>
       </div>
     </div>
@@ -755,7 +756,7 @@ export default function Analytics() {
             <Ring value={summary.successRate} />
           </div>
           <div>
-            <strong>{number(summary.successRate)}٪</strong>
+            <strong>{summary.successRate === null ? '—' : `${number(summary.successRate)}٪`}</strong>
             <span>نرخ موفقیت</span>
             <small>نسبت عملیات موفق به کل عملیات</small>
           </div>
