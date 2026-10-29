@@ -57,6 +57,45 @@ interface SummaryDto {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Runtime validation is required here: TypeScript interfaces do not validate
+ * network data. An older/mismatched API response previously reached
+ * `t.topPosts` or `summary.automation.ai` as null/undefined and was reduced to
+ * the generic "دریافت آمار تحلیل ناموفق بود" message.
+ */
+function isAnalyticsSummary(value: unknown): value is SummaryDto {
+  if (!isRecord(value)) return false;
+  const events = value.events;
+  const platforms = value.platforms;
+  const revenue = value.revenue;
+  const links = value.links;
+  const automation = value.automation;
+
+  return (
+    typeof value.days === 'number' &&
+    isRecord(events) &&
+    typeof events.total === 'number' &&
+    typeof events.sent === 'number' &&
+    typeof events.failed === 'number' &&
+    Array.isArray(value.daily) &&
+    isRecord(platforms) &&
+    isRecord(revenue) &&
+    isRecord(links) &&
+    typeof links.clicks === 'number' &&
+    isRecord(automation) &&
+    isRecord(automation.ai) &&
+    isRecord(automation.workflows) &&
+    Array.isArray(automation.errors) &&
+    (value.topPosts === undefined || Array.isArray(value.topPosts)) &&
+    (value.topCampaigns === undefined || Array.isArray(value.topCampaigns)) &&
+    (value.errors === undefined || Array.isArray(value.errors))
+  );
+}
+
 interface EventsDto {
   events: Array<{
     id: string;
@@ -418,11 +457,11 @@ export default function Analytics() {
         ]);
 
         if (summaryResult.status === 'rejected') throw summaryResult.reason;
-        const s = summaryResult.value;
-        if (!s || typeof s !== 'object' || !s.events || !Array.isArray(s.daily)) {
+        const s: unknown = summaryResult.value;
+        if (!isAnalyticsSummary(s)) {
           throw new ApiRequestError(
             'INVALID_ANALYTICS_RESPONSE',
-            'ساختار پاسخ آمار از سرور معتبر نیست. شناسهٔ پیگیری را برای پشتیبانی ثبت کنید.',
+            'ساختار پاسخ آمار با نسخهٔ فعلی پنل سازگار نیست. درخواست آمار به سرور رسیده، اما شکل داده‌ها معتبر نیست؛ شناسهٔ پیگیری را برای پشتیبانی ثبت کنید.',
             502,
           );
         }
