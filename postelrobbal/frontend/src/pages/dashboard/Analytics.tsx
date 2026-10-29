@@ -16,9 +16,9 @@ interface SummaryDto {
   successRate: number | null;
   platforms: Record<PlatformKey, { sent: number; failed: number }>;
   daily: Array<{ day: string; eventName: string; count: number }>;
-  topPosts: Array<{ id: string; title: string | null; events: number }>;
-  topCampaigns: Array<{ id: string; name: string; events: number }>;
-  errors: Array<{ eventType: string; count: number }>;
+  topPosts?: Array<{ id: string; title: string | null; events: number }>;
+  topCampaigns?: Array<{ id: string; name: string; events: number }>;
+  errors?: Array<{ eventType: string; count: number }>;
   links: { clicks: number };
   revenue: {
     paymentsCreated: number;
@@ -70,7 +70,7 @@ function isNullableNumber(value: unknown): value is number | null {
   return value === null || isFiniteNumber(value);
 }
 
-function hasNumericFields(value: unknown, fields: string[]): value is Record<string, number> {
+function hasNumericFields(value: unknown, fields: string[]): boolean {
   return isRecord(value) && fields.every((field) => isFiniteNumber(value[field]));
 }
 
