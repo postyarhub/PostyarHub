@@ -106,11 +106,11 @@ jobs:
           set -euo pipefail
           cd postelrobbal/app
           npm ci
-          npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5
+          npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5 zod@4.6.7
           npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5 vite@6.4.3
-          # drizzle-kit@0.31.11 still pulls an abandoned loader with an obsolete,
-          # vulnerable nested esbuild. Override only that transitive copy; candidate
-          # typecheck, unit tests, build and audit must all pass before commit.
+          # Upgrade Zod to the advisory-patched v4 release and keep the known
+          # esbuild override for drizzle-kit. Typecheck, unit tests, build and
+          # zero-advisory audit must all pass before lockfiles are committed.
           node <<'NODE'
           const fs = require('node:fs');
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -181,7 +181,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "Verified dependency candidate already matches the branch; no commit needed."
           else
-            git commit -m "security: update dependencies and remove vulnerable transitive esbuild"
+            git commit -m "security: patch zod and vulnerable transitive dependencies"
             git push origin "HEAD:${GITHUB_HEAD_REF}"
           fi
       - name: Upload isolated dependency candidate
