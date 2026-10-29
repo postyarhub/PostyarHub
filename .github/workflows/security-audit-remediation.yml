@@ -192,6 +192,11 @@ jobs:
             if (Number(v.total ?? 0) !== 0) process.exitCode = 1;
           }
           NODE
+          # The other CI jobs may update workflow/support files while this
+          # candidate is being audited. Rebase the generated dependency lockfiles
+          # onto the latest PR head instead of pushing a stale branch snapshot.
+          git fetch origin "$GITHUB_HEAD_REF"
+          git checkout -B "$GITHUB_HEAD_REF" "origin/$GITHUB_HEAD_REF"
           cp "$RUNNER_TEMP/dependency-candidate/app/package.json" postelrobbal/app/package.json
           cp "$RUNNER_TEMP/dependency-candidate/app/package-lock.json" postelrobbal/app/package-lock.json
           cp "$RUNNER_TEMP/dependency-candidate/frontend/package.json" postelrobbal/frontend/package.json
