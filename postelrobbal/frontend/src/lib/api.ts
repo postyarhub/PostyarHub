@@ -93,17 +93,34 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     );
   }
 
-  if (!Object.prototype.hasOwnProperty.call(payload, 'data')) {
-    const err = (payload as { error?: ApiError }).error;
-    throw new ApiRequestError(
-      'INVALID_API_RESPONSE',
-      err?.message ?? 'قالب پاسخ سرور با قرارداد API سازگار نیست. در صورت تکرار، این خطا را به پشتیبانی گزارش کنید.',
-      502,
-      err?.requestId,
-    );
+  if (Object.prototype.hasOwnProperty.call(payload, 'data')) {
+    return (payload as { data: T }).data;
   }
 
-  return (payload as { data: T }).data;
+  const responseObject = payload as Record<string, unknown> & { error?: ApiError };
+  const err = responseObject.error;
+
+  // The live application may briefly run a backend bundle from the previous
+  // release while the static SPA is already updated. The analytics endpoints
+  // historically returned their DTO directly in some releases. Accept that
+  // legacy shape only for the two read-only analytics requests; never treat an
+  // error/success envelope without "data" as a valid DTO.
+  const isAnalyticsRead = /^\/api\/v1\/analytics\/(?:summary|events)(?:\?|$)/.test(path);
+  const isLegacyDirectPayload =
+    isAnalyticsRead &&
+    !Object.prototype.hasOwnProperty.call(responseObject, 'success') &&
+    !Object.prototype.hasOwnProperty.call(responseObject, 'error');
+
+  if (isLegacyDirectPayload) {
+    return payload as T;
+  }
+
+  throw new ApiRequestError(
+    'INVALID_API_RESPONSE',
+    err?.message ?? 'قالب پاسخ سرور با قرارداد API سازگار نیست. در صورت تکرار، این خطا را به پشتیبانی گزارش کنید.',
+    502,
+    err?.requestId,
+  );
 }
 
 export const api = {
