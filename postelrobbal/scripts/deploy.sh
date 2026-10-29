@@ -62,7 +62,7 @@ preflight() {
   [ -x "${NPM_BIN_PATH}" ] || NPM_BIN_PATH="$(command -v npm 2>/dev/null || true)"
   [ -x "${NPM_BIN_PATH}" ] || die "npm executable not found beside the pinned Node.js runtime."
 
-  for dir in app api workers config database private storage logs wordpress-plugin; do
+  for dir in app api workers scheduler scripts config database private storage logs wordpress-plugin; do
     mkdir -p "${APP_HOME}/${dir}"
   done
   ok "Directory tree present under ${APP_HOME}"
