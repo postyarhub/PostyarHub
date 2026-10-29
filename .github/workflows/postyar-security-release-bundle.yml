@@ -91,6 +91,21 @@ jobs:
           cp -a postelrobbal/database/migrations "$RELEASE/postelrobbal/database/"
 
           cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
+          # Passenger resolves app/dist imports from api/node_modules first;
+          # its production manifest must match the dependencies used to compile it.
+          node - "$RELEASE/postelrobbal/app/package.json" "$RELEASE/postelrobbal/api/package.json" <<'NODE'
+          const fs = require('node:fs');
+          const app = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const api = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const stable = (value) => JSON.stringify(Object.fromEntries(Object.entries(value ?? {}).sort(([a], [b]) => a.localeCompare(b))));
+          for (const key of ['dependencies', 'overrides']) {
+            if (stable(app[key]) !== stable(api[key])) {
+              console.error('Passenger runtime does not match app build dependency contract:', key);
+              process.exit(1);
+            }
+          }
+          console.log('PASSENGER_RUNTIME_DEPENDENCY_PARITY_OK');
+          NODE
           cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
 
           # The host deploy script depends on these committed, non-secret
