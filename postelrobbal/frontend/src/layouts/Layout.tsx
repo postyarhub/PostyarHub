@@ -239,10 +239,36 @@ export function DashboardLayout() {
   const [unread, setUnread] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetClosing, setSheetClosing] = useState(false);
+  const [surveyAvailable, setSurveyAvailable] = useState(false);
 
   useEffect(() => {
     if (!loading && !me) navigate('/?auth=login', { replace: true });
   }, [loading, me, navigate]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshSurveyAvailability = () => {
+      if (!me) {
+        setSurveyAvailable(false);
+        return;
+      }
+      void api.get<{ survey: { id: string } | null }>('/api/v1/surveys/featured')
+        .then((data) => {
+          if (active) setSurveyAvailable(Boolean(data.survey?.id));
+        })
+        .catch(() => {
+          if (active) setSurveyAvailable(false);
+        });
+    };
+    refreshSurveyAvailability();
+    window.addEventListener('focus', refreshSurveyAvailability);
+    const timer = window.setInterval(refreshSurveyAvailability, 60000);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refreshSurveyAvailability);
+      window.clearInterval(timer);
+    };
+  }, [me?.user.id, location.pathname]);
 
   useEffect(() => {
     setNotifOpen(false);
@@ -326,7 +352,9 @@ export function DashboardLayout() {
   if (!me) return null;
 
   const isAdmin = me.user.role === 'SUPER_ADMIN' || me.user.role === 'SUPPORT';
-  const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+  const visibleItems = NAV_ITEMS.filter(
+    (item) => (!item.adminOnly || isAdmin) && (item.to !== '/dashboard/surveys' || surveyAvailable),
+  );
   const mainItems = BOTTOM_NAV_ROUTES
     .map((route) => visibleItems.find((item) => item.to === route))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));

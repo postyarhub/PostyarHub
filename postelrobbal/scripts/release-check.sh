@@ -135,6 +135,21 @@ done
 [ -s "postelrobbal/wordpress-plugin/postyar-connector/postyar-connector.php" ] \
   && pass "postelrobbal/wordpress-plugin/postyar-connector/postyar-connector.php" \
   || fail "missing postelrobbal/wordpress-plugin/postyar-connector/postyar-connector.php (connector plugin not shipped)"
+[ -s "postelrobbal/wordpress-plugin/postyar-wordpress/postyar-wordpress.php" ] \
+  && pass "canonical postyar-wordpress plugin source" \
+  || fail "missing canonical postyar-wordpress plugin source"
+[ -s "postelrobbal/wordpress-plugin/postyar-wordpress.zip" ] \
+  && pass "postyar-wordpress.zip (subscription-gated download package)" \
+  || fail "missing postelrobbal/wordpress-plugin/postyar-wordpress.zip (dashboard download package)"
+if [ -s "postelrobbal/wordpress-plugin/postyar-wordpress.zip" ]; then
+  PLUGIN_ZIP_LIST="$(unzip -Z1 "postelrobbal/wordpress-plugin/postyar-wordpress.zip" 2>/dev/null)" \
+    || { fail "canonical WordPress plugin ZIP is unreadable"; PLUGIN_ZIP_LIST=""; }
+  if [ -n "$PLUGIN_ZIP_LIST" ] && printf '%s\n' "$PLUGIN_ZIP_LIST" | grep -Ev '^postyar-wordpress(/|$)' >/dev/null; then
+    fail "WordPress download ZIP contains an unexpected path outside the canonical plugin root"
+  elif [ -n "$PLUGIN_ZIP_LIST" ]; then
+    pass "WordPress download ZIP path scope is restricted to canonical plugin root"
+  fi
+fi
 for s in postelrobbal/scripts/deploy.sh postelrobbal/scripts/release-check.sh; do
   [ -s "$s" ] && pass "$s" || fail "missing required script: $s"
 done

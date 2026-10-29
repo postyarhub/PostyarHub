@@ -9,7 +9,29 @@ on:
       - 'postelrobbal/frontend/**'
       - 'postelrobbal/api/package.json'
       - 'postelrobbal/api/package-lock.json'
+      - 'postelrobbal/config/load-env.cjs'
+      - 'postelrobbal/workers/**'
+      - 'postelrobbal/scheduler/**'
+      - 'postelrobbal/scripts/deploy.sh'
+      - 'postelrobbal/scripts/activate-workers.sh'
       - 'postelrobbal/wordpress-plugin/postyar-wordpress/**'
+      - 'public_html/**'
+      - '.github/workflows/postyar-security-release-bundle.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'postelrobbal/app/**'
+      - 'postelrobbal/database/migrations/**'
+      - 'postelrobbal/frontend/**'
+      - 'postelrobbal/api/package.json'
+      - 'postelrobbal/api/package-lock.json'
+      - 'postelrobbal/config/load-env.cjs'
+      - 'postelrobbal/workers/**'
+      - 'postelrobbal/scheduler/**'
+      - 'postelrobbal/scripts/deploy.sh'
+      - 'postelrobbal/scripts/activate-workers.sh'
+      - 'postelrobbal/wordpress-plugin/postyar-wordpress/**'
+      - 'public_html/**'
       - '.github/workflows/postyar-security-release-bundle.yml'
   workflow_dispatch:
 
@@ -21,7 +43,7 @@ jobs:
     name: Build one prebuilt production release bundle
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact main commit
+      - name: Checkout exact release candidate commit
         uses: actions/checkout@v4
 
       - name: Set up Node.js 22
@@ -53,7 +75,7 @@ jobs:
           OUT="$RUNNER_TEMP/postyar-release-output"
           STAGE="$RUNNER_TEMP/postyar-release-stage"
           RELEASE="$STAGE/POSTYAR-SECURITY-RELEASE-20261016"
-          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/database" "$RELEASE/postelrobbal/wordpress-plugin"
+          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/database" "$RELEASE/postelrobbal/wordpress-plugin" "$RELEASE/postelrobbal/config" "$RELEASE/postelrobbal/workers" "$RELEASE/postelrobbal/scheduler" "$RELEASE/postelrobbal/scripts" "$RELEASE/public_html"
 
           # Source + exact compiled output. Never package node_modules, .env, logs, backups,
           # user files, runtime data, database files or host configuration.
@@ -69,7 +91,60 @@ jobs:
           cp -a postelrobbal/database/migrations "$RELEASE/postelrobbal/database/"
 
           cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
+          # Passenger resolves app/dist imports from api/node_modules first;
+          # its production manifest must match the dependencies used to compile it.
+          node - "$RELEASE/postelrobbal/app/package.json" "$RELEASE/postelrobbal/api/package.json" <<'NODE'
+          const fs = require('node:fs');
+          const app = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const api = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const stable = (value) => JSON.stringify(Object.fromEntries(Object.entries(value ?? {}).sort(([a], [b]) => a.localeCompare(b))));
+          for (const key of ['dependencies', 'overrides']) {
+            if (stable(app[key]) !== stable(api[key])) {
+              console.error('Passenger runtime does not match app build dependency contract:', key);
+              process.exit(1);
+            }
+          }
+          console.log('PASSENGER_RUNTIME_DEPENDENCY_PARITY_OK');
+          NODE
           cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
+
+          # The host deploy script depends on these committed, non-secret
+          # runtime/support files. Never package .env or host-local config.
+          cp -a postelrobbal/config/load-env.cjs "$RELEASE/postelrobbal/config/"
+          cp -a postelrobbal/workers/worker.js postelrobbal/workers/run-worker.sh "$RELEASE/postelrobbal/workers/"
+          cp -a postelrobbal/scheduler/scheduler.js postelrobbal/scheduler/run-scheduler.sh "$RELEASE/postelrobbal/scheduler/"
+          cp -a postelrobbal/scripts/deploy.sh postelrobbal/scripts/activate-workers.sh "$RELEASE/postelrobbal/scripts/"
+
+          # Preserve the complete SEO/static site (.htaccess, routes, images,
+          # fonts and public files), then overlay the freshly built SPA.
+          cp -a public_html/. "$RELEASE/public_html/"
+          cp -a postelrobbal/frontend/dist/. "$RELEASE/public_html/"
+          rm -rf "$RELEASE/public_html/assets"
+          cp -a postelrobbal/frontend/dist/assets "$RELEASE/public_html/assets"
+
+          (cd "$RELEASE/postelrobbal/wordpress-plugin" && zip -qr postyar-wordpress.zip postyar-wordpress)
+          unzip -tq "$RELEASE/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
+
+          # Fail packaging before checksum/archive creation if any required
+          # deploy component is absent. These checks mirror deploy.sh preflight.
+          for required in \
+            "$RELEASE/public_html/index.html" \
+            "$RELEASE/public_html/.htaccess" \
+            "$RELEASE/postelrobbal/app/dist/server.js" \
+            "$RELEASE/postelrobbal/api/app.js" \
+            "$RELEASE/postelrobbal/api/package-lock.json" \
+            "$RELEASE/postelrobbal/config/load-env.cjs" \
+            "$RELEASE/postelrobbal/workers/worker.js" \
+            "$RELEASE/postelrobbal/workers/run-worker.sh" \
+            "$RELEASE/postelrobbal/scheduler/scheduler.js" \
+            "$RELEASE/postelrobbal/scheduler/run-scheduler.sh" \
+            "$RELEASE/postelrobbal/scripts/deploy.sh" \
+            "$RELEASE/postelrobbal/scripts/activate-workers.sh" \
+            "$RELEASE/postelrobbal/wordpress-plugin/postyar-wordpress.zip"; do
+            test -s "$required" || { echo "Required release component missing: $required" >&2; exit 1; }
+          done
+          bash -n "$RELEASE/postelrobbal/scripts/deploy.sh"
+          bash -n "$RELEASE/postelrobbal/scripts/activate-workers.sh"
 
           printf 'release_commit=%s\n' "$(git rev-parse HEAD)" > "$RELEASE/_release/metadata.txt"
           printf 'release_branch=%s\n' "${GITHUB_REF_NAME:-unknown}" >> "$RELEASE/_release/metadata.txt"

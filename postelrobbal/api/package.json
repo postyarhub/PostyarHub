@@ -28,7 +28,7 @@
     "svg-captcha": "^1.4.0",
     "ulid": "^2.3.0",
     "undici": "^7.3.0",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

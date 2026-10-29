@@ -41,7 +41,7 @@ async function readPrefs(tenantId: string): Promise<Record<string, boolean>> {
 }
 
 const prefsSchema = z.object({
-  prefs: z.record(z.boolean()).refine(
+  prefs: z.record(z.string(), z.boolean()).refine(
     (r) => Object.keys(r).every((k) => NOTIFICATION_CATEGORIES.some((c) => c.key === k)) && Object.keys(r).length > 0,
     { message: 'کلیدهای دسته‌بندی معتبر نیستند.' }
   ),

@@ -13,14 +13,15 @@ interface SummaryDto {
   from: string;
   to: string;
   events: { total: number; sent: number; failed: number };
-  successRate: number;
+  successRate: number | null;
   platforms: Record<PlatformKey, { sent: number; failed: number }>;
   daily: Array<{ day: string; eventName: string; count: number }>;
-  topPosts: Array<{ id: string; title: string | null; events: number }>;
-  topCampaigns: Array<{ id: string; name: string; events: number }>;
-  errors: Array<{ eventType: string; count: number }>;
+  topPosts?: Array<{ id: string; title: string | null; events: number }>;
+  topCampaigns?: Array<{ id: string; name: string; events: number }>;
+  errors?: Array<{ eventType: string; count: number }>;
   links: { clicks: number };
   revenue: {
+    paymentsCreated: number;
     paymentsCompleted: number;
     paymentsCompletedRial: number;
     subscriptionRevenueRial: number;
@@ -38,16 +39,16 @@ interface SummaryDto {
       requested: number;
       completed: number;
       failed: number;
-      successRate: number;
+      successRate: number | null;
       tokens: number;
-      avgDurationMs: number;
+      avgDurationMs: number | null;
     };
     workflows: {
       started: number;
       completed: number;
       failed: number;
-      successRate: number;
-      avgDurationMs: number;
+      successRate: number | null;
+      avgDurationMs: number | null;
     };
     errors: Array<{
       eventType: string;
@@ -55,6 +56,150 @@ interface SummaryDto {
       count: number;
     }>;
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function hasNumericFields(value: unknown, fields: string[]): boolean {
+  return isRecord(value) && fields.every((field) => isFiniteNumber(value[field]));
+}
+
+/**
+ * TypeScript types do not validate network data. Validate every nested collection
+ * that the dashboard maps over and every aggregate it uses in arithmetic, so a
+ * backend/frontend version skew becomes a visible API-contract error rather than
+ * a render-time TypeError hidden behind the generic analytics failure message.
+ */
+function isAnalyticsSummary(value: unknown): value is SummaryDto {
+  if (!isRecord(value)) return false;
+
+  const events = value.events;
+  const platforms = value.platforms;
+  const revenue = value.revenue;
+  const links = value.links;
+  const automation = value.automation;
+
+  if (
+    !isFiniteNumber(value.days) ||
+    typeof value.from !== 'string' ||
+    typeof value.to !== 'string' ||
+    !isRecord(events) ||
+    !isFiniteNumber(events.total) ||
+    !isFiniteNumber(events.sent) ||
+    !isFiniteNumber(events.failed) ||
+    !isNullableNumber(value.successRate) ||
+    !Array.isArray(value.daily) ||
+    !value.daily.every((row) =>
+      isRecord(row) &&
+      typeof row.day === 'string' &&
+      typeof row.eventName === 'string' &&
+      isFiniteNumber(row.count)
+    ) ||
+    !isRecord(platforms) ||
+    !isRecord(revenue) ||
+    !isRecord(links) ||
+    !isFiniteNumber(links.clicks) ||
+    !isRecord(automation) ||
+    !isRecord(automation.ai) ||
+    !isRecord(automation.workflows) ||
+    !Array.isArray(automation.errors) ||
+    !automation.errors.every((row) =>
+      isRecord(row) &&
+      typeof row.eventType === 'string' &&
+      typeof row.errorCode === 'string' &&
+      isFiniteNumber(row.count)
+    )
+  ) {
+    return false;
+  }
+
+  const platformKeys: PlatformKey[] = ['telegram', 'bale', 'rubika', 'wordpress'];
+  if (!platformKeys.every((key) => hasNumericFields(platforms[key], ['sent', 'failed']))) {
+    return false;
+  }
+
+  const revenueFields = [
+    'paymentsCreated',
+    'paymentsCompleted',
+    'paymentsCompletedRial',
+    'subscriptionRevenueRial',
+    'walletTopupRial',
+    'paymentsFailed',
+    'subscriptionsCreated',
+    'subscriptionsRenewed',
+    'subscriptionsExpired',
+    'referralsCreated',
+    'referralRewardEvents',
+    'referralRewardPoints',
+  ];
+  if (!revenueFields.every((field) => isFiniteNumber(revenue[field]))) {
+    return false;
+  }
+
+  const ai = automation.ai;
+  const workflows = automation.workflows;
+  if (
+    !isFiniteNumber(ai.requested) ||
+    !isFiniteNumber(ai.completed) ||
+    !isFiniteNumber(ai.failed) ||
+    !isNullableNumber(ai.successRate) ||
+    !isFiniteNumber(ai.tokens) ||
+    !isNullableNumber(ai.avgDurationMs) ||
+    !isFiniteNumber(workflows.started) ||
+    !isFiniteNumber(workflows.completed) ||
+    !isFiniteNumber(workflows.failed) ||
+    !isNullableNumber(workflows.successRate) ||
+    !isNullableNumber(workflows.avgDurationMs)
+  ) {
+    return false;
+  }
+
+  if (value.topPosts !== undefined && (
+    !Array.isArray(value.topPosts) ||
+    !value.topPosts.every((row) =>
+      isRecord(row) &&
+      typeof row.id === 'string' &&
+      (row.title === null || typeof row.title === 'string') &&
+      isFiniteNumber(row.events)
+    )
+  )) {
+    return false;
+  }
+
+  if (value.topCampaigns !== undefined && (
+    !Array.isArray(value.topCampaigns) ||
+    !value.topCampaigns.every((row) =>
+      isRecord(row) &&
+      typeof row.id === 'string' &&
+      typeof row.name === 'string' &&
+      isFiniteNumber(row.events)
+    )
+  )) {
+    return false;
+  }
+
+  if (value.errors !== undefined && (
+    !Array.isArray(value.errors) ||
+    !value.errors.every((row) =>
+      isRecord(row) &&
+      typeof row.eventType === 'string' &&
+      isFiniteNumber(row.count)
+    )
+  )) {
+    return false;
+  }
+
+  return true;
 }
 
 interface EventsDto {
@@ -246,8 +391,9 @@ function Progress({
   );
 }
 
-function Ring({ value }: { value: number }) {
-  const percent = Math.min(100, Math.max(0, value));
+function Ring({ value }: { value: number | null }) {
+  const hasValue = value !== null && Number.isFinite(value);
+  const percent = hasValue ? Math.min(100, Math.max(0, value)) : 0;
 
   return (
     <div
@@ -257,7 +403,7 @@ function Ring({ value }: { value: number }) {
       }}
     >
       <div>
-        <strong>{number(percent)}٪</strong>
+        <strong>{hasValue ? `${number(percent)}٪` : '—'}</strong>
         <span>موفقیت</span>
       </div>
     </div>
@@ -400,18 +546,49 @@ export default function Analytics() {
     {},
   );
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [eventsLoadError, setEventsLoadError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setLoadError(null);
+    setEventsLoadError(null);
 
     (async () => {
       try {
-        const [s, ev] = await Promise.all([
+        const [summaryResult, eventsResult] = await Promise.allSettled([
           api.get<SummaryDto>('/api/v1/analytics/summary?days=30'),
           api.get<EventsDto>('/api/v1/analytics/events?limit=24'),
         ]);
 
-        const ids = (s.topPosts ?? []).slice(0, 5).map((post) => post.id);
+        if (summaryResult.status === 'rejected') throw summaryResult.reason;
+        const s: unknown = summaryResult.value;
+        if (!isAnalyticsSummary(s)) {
+          throw new ApiRequestError(
+            'INVALID_ANALYTICS_RESPONSE',
+            'ساختار پاسخ آمار با نسخهٔ فعلی پنل سازگار نیست. درخواست آمار به سرور رسیده، اما شکل داده‌ها معتبر نیست؛ شناسهٔ پیگیری را برای پشتیبانی ثبت کنید.',
+            502,
+          );
+        }
+
+        const ev = eventsResult.status === 'fulfilled' && Array.isArray(eventsResult.value?.events)
+          ? eventsResult.value
+          : { events: [], nextCursor: null };
+
+        if (eventsResult.status === 'rejected') {
+          const eventMessage = eventsResult.reason instanceof ApiRequestError
+            ? eventsResult.reason.message
+            : eventsResult.reason instanceof Error
+              ? `${eventsResult.reason.name}: ${eventsResult.reason.message}`
+              : 'دریافت فهرست فعالیت‌ها ناموفق بود.';
+          setEventsLoadError(eventMessage);
+        } else if (!Array.isArray(eventsResult.value?.events)) {
+          setEventsLoadError('ساختار پاسخ فهرست فعالیت‌ها معتبر نیست.');
+        }
+
+        const ids = (Array.isArray(s.topPosts) ? s.topPosts : []).slice(0, 5).map((post) => post.id);
         const details = await Promise.allSettled(
           ids.map(
             async (id) =>
@@ -431,13 +608,16 @@ export default function Analytics() {
           setSummary(s);
           setEvents(ev.events ?? []);
           setPostDetails(map);
+          setLoadError(null);
         }
       } catch (error) {
-        toast.error(
-          error instanceof ApiRequestError
-            ? error.message
-            : 'دریافت آمار تحلیل ناموفق بود.',
-        );
+        const message = error instanceof ApiRequestError
+          ? `${error.message}${error.requestId ? ` (شناسهٔ پیگیری: ${error.requestId})` : ''}`
+          : error instanceof Error
+            ? `بارگذاری آمار با خطای ${error.name} مواجه شد: ${error.message}`
+            : 'دریافت آمار تحلیل ناموفق بود.';
+        if (alive) setLoadError(message);
+        toast.error(message);
       } finally {
         if (alive) setLoading(false);
       }
@@ -446,7 +626,7 @@ export default function Analytics() {
     return () => {
       alive = false;
     };
-  }, [toast]);
+  }, [toast, retryKey]);
 
   const daily = useMemo(() => {
     const map = new Map<string, { total: number; breakdown: Map<string, number> }>();
@@ -490,8 +670,28 @@ export default function Analytics() {
       });
   }, [summary]);
 
-  if (loading || !summary) {
+  if (loading) {
     return <PageLoading />;
+  }
+
+  if (!summary) {
+    return (
+      <div className="analytics-v4-page">
+        <Card pad="lg" style={{ borderColor: 'var(--danger, #dc2626)' }}>
+          <h1 style={{ marginTop: 0 }}>تحلیل آمار در دسترس نیست</h1>
+          <p role="alert" style={{ lineHeight: 1.9 }}>
+            {loadError ?? 'دریافت اطلاعات تحلیل کامل نشد.'}
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setRetryKey((value) => value + 1)}
+          >
+            تلاش مجدد
+          </button>
+        </Card>
+      </div>
+    );
   }
 
   const platforms = (
@@ -556,7 +756,7 @@ export default function Analytics() {
             <Ring value={summary.successRate} />
           </div>
           <div>
-            <strong>{number(summary.successRate)}٪</strong>
+            <strong>{summary.successRate === null ? '—' : `${number(summary.successRate)}٪`}</strong>
             <span>نرخ موفقیت</span>
             <small>نسبت عملیات موفق به کل عملیات</small>
           </div>
@@ -632,7 +832,7 @@ export default function Analytics() {
           title="پست‌های پرتراکنش"
           description="نام پست، کانال مقصد، پلتفرم و نتیجه‌ی ارسال."
         >
-          {summary.topPosts.length === 0 ? (
+          {(summary.topPosts ?? []).length === 0 ? (
             <EmptyState
               icon="📊"
               title="داده‌ای ثبت نشده"
@@ -640,7 +840,7 @@ export default function Analytics() {
             />
           ) : (
             <div className="analytics-v4-posts">
-              {summary.topPosts.slice(0, 5).map((post) => {
+              {(summary.topPosts ?? []).slice(0, 5).map((post) => {
                 const detail = postDetails[post.id];
                 const groups = new Map<
                   string,
@@ -899,6 +1099,13 @@ export default function Analytics() {
         title="آخرین فعالیت‌ها"
         description="آخرین رویدادهای ثبت‌شده در حساب کاربری."
       >
+        {eventsLoadError ? (
+          <div role="status" className="analytics-v4-inline-warning" style={{ marginBottom: 12 }}>
+            <p style={{ margin: '0 0 8px' }}>فهرست فعالیت‌ها دریافت نشد؛ سایر آمار در صورت دسترس بودن همچنان نمایش داده می‌شوند.</p>
+            <small>{eventsLoadError}</small>
+            <div><button type="button" className="btn btn-ghost btn-sm" onClick={() => setRetryKey((value) => value + 1)}>تلاش مجدد</button></div>
+          </div>
+        ) : null}
         {events.length === 0 ? (
           <EmptyState
             icon="🧭"

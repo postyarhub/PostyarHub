@@ -47,7 +47,7 @@ die()  { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 preflight() {
   log "Preflight: tooling, directories, environment, dependencies"
 
-  for tool in curl rsync flock pgrep sed; do
+  for tool in curl rsync flock pgrep sed unzip; do
     command -v "${tool}" >/dev/null 2>&1 || die "required tool not found in PATH: ${tool}"
   done
   NODE_BIN_PATH="$(cat "${APP_HOME}/config/node.bin" 2>/dev/null || true)"
@@ -62,7 +62,7 @@ preflight() {
   [ -x "${NPM_BIN_PATH}" ] || NPM_BIN_PATH="$(command -v npm 2>/dev/null || true)"
   [ -x "${NPM_BIN_PATH}" ] || die "npm executable not found beside the pinned Node.js runtime."
 
-  for dir in app api workers config database private storage logs; do
+  for dir in app api workers scheduler scripts config database private storage logs wordpress-plugin; do
     mkdir -p "${APP_HOME}/${dir}"
   done
   ok "Directory tree present under ${APP_HOME}"
@@ -107,6 +107,9 @@ preflight() {
   [ -f "${RELEASE_DIR}/public_html/index.html" ] || die \
     "public_html/index.html missing. Build the SPA in CI (vite build into public_html/), then re-run deploy."
   ok "Build artifacts present (postelrobbal/app/dist, public_html)"
+  PLUGIN_ZIP_RELEASE="${RELEASE_DIR}/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
+  [ -s "${PLUGIN_ZIP_RELEASE}" ] || die "Canonical WordPress plugin ZIP missing from release; create a complete release package first."
+  unzip -tq "${PLUGIN_ZIP_RELEASE}" >/dev/null || die "Canonical WordPress plugin ZIP failed integrity verification."
   # Passenger and the worker/scheduler shims resolve runtime dependencies from
   # postelrobbal/api/node_modules. The compiled application remains under app/.
   log "Installing production dependencies into ${APP_HOME}/api (Passenger runtime)"
@@ -233,6 +236,20 @@ ship_artifacts() {
     touch "${PUBLIC_HTML}/.postyar-deployed"
     ok "SPA deployed to ${PUBLIC_HTML} (fresh)"
   fi
+
+  # Normalize permissions after rsync: public Vite assets must remain readable by LiteSpeed.
+  local asset_root="${PUBLIC_HTML}/assets"
+  [ -d "${asset_root}" ] && [ ! -L "${asset_root}" ] || die "Public asset directory is missing or unsafe: ${asset_root}"
+  if find -P "${asset_root}" -type l -print -quit | grep -q .; then
+    die "Symlink found in public assets; refusing permission normalization."
+  fi
+  find -P "${asset_root}" -type d -exec chmod 755 -- {} +
+  find -P "${asset_root}" -type f -exec chmod 644 -- {} +
+  ok "Public asset permissions normalized (directories 755, files 644)"
+
+  # Keep the authenticated download archive outside public_html; never expose a direct public ZIP URL.
+  install -m 0644 "${PLUGIN_ZIP_RELEASE}" "${APP_HOME}/wordpress-plugin/postyar-wordpress.zip"
+  ok "Canonical WordPress plugin archive installed for entitlement-gated API download"
 
   # Backend build → postelrobbal/app
   rsync -a --delete "${RELEASE_DIR}/postelrobbal/app/dist/" "${APP_HOME}/app/dist/"

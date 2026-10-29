@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiRequestError, type ChannelDto } from '../../lib/api';
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageLoading, Pagination, Select, StatusBadge } from '../../components/ui';
 import { faMoney, faNumber, PLATFORM_FA } from '../../lib/format';
@@ -98,6 +99,18 @@ export default function WooCommerce(){
  if(locked)return <Card pad="lg"><div style={{maxWidth:620,margin:'0 auto',textAlign:'center'}}><div style={{fontSize:42}}>🧩</div><h2>اتصال وب‌سایت در پلن فعلی فعال نیست</h2><p style={{color:'var(--text-2)'}}>برای فعال‌سازی اتصال فروشگاه، اشتراک خود را ارتقا دهید.</p><Button onClick={()=>window.location.assign('/dashboard/subscription')}>ارتقای اشتراک</Button></div></Card>;
  return <div className="woocommerce-center" style={{display:'grid',gap:16}}>
   <div className="woo-management-head" style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:12,flexWrap:'wrap'}}><div><h1 style={{fontSize:22,fontWeight:900,margin:0}}>مدیریت وب‌سایت</h1><p style={{color:'var(--text-2)',margin:'6px 0 0'}}>اتصال سایت، همگام‌سازی مستقل نوشته‌ها و برگه‌ها و مدیریت محصولات فروشگاه.</p></div><Button onClick={()=>setConnectOpen(true)}>+ اتصال سایت</Button></div>
+  <Card pad="lg" className="woo-plugin-download">
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:16,flexWrap:'wrap'}}>
+      <div style={{minWidth:220,flex:'1 1 280px'}}>
+        <h2 style={{fontSize:16,fontWeight:900,margin:'0 0 6px'}}>افزونهٔ رسمی پُست‌یار برای وردپرس و ووکامرس</h2>
+        <p style={{color:'var(--text-2)',fontSize:13,lineHeight:1.9,margin:0}}>برای اتصال امن سایت، دریافت مقالات و محصولات و مدیریت انتشار خودکار، افزونه را نصب کنید. دسترسی دانلود مطابق قابلیت فعال اشتراک کنترل می‌شود.</p>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <a className="btn btn-primary" href="/api/v1/wordpress/plugin-download">دانلود افزونه</a>
+        <Link className="btn btn-ghost" to="/dashboard/help#woo-connect">راهنمای نصب و اتصال</Link>
+      </div>
+    </div>
+  </Card>
   <div className="woo-management-tabs" style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}>{(['wordpress','woocommerce'] as const).map(t=><button key={t} type="button" onClick={()=>{setTab(t);setCatalogCategory('')}} style={{padding:'13px 16px',borderRadius:14,border:`1px solid ${tab===t?'var(--brand)':'var(--border)'}`,background:tab===t?'var(--brand-soft)':'var(--surface)',color:'var(--text)',fontWeight:850,cursor:'pointer'}}>{t==='wordpress'?'🌐 وردپرس — مقالات و محتوا':'🛒 فروشگاه — محصولات و فروش'}</button>)}</div>
   {credentials?<Card style={{borderColor:'var(--warning)',background:'var(--warning-soft)'}}><strong>اطلاعات اتصال یک‌بار مصرف</strong><div style={{display:'grid',gap:8,marginTop:10}}>{[['آدرس',credentials.siteUrl],['کلید سایت',credentials.siteKey],['اطلاعات محرمانه',credentials.secret],['کد اتصال',credentials.connectionCode]].map(([l,v])=><div key={String(l)} style={{display:'grid',gridTemplateColumns:'90px minmax(0,1fr)',gap:8,alignItems:'center'}}><span style={{color:'var(--text-2)',fontSize:12}}>{l}</span><code dir="ltr" style={{padding:7,borderRadius:9,border:'1px solid var(--border)',background:'var(--surface)',wordBreak:'break-all'}}>{v}</code></div>)}</div></Card>:null}
   {sites.length===0?(sitesLoadError?<Card style={{borderColor:'var(--danger)',background:'var(--surface)'}}><strong>دریافت فهرست وب‌سایت ناموفق بود.</strong><p style={{lineHeight:1.8}}>{sitesLoadError}</p><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><Button onClick={()=>{void loadSites().catch(e=>{const message=apiErrorText(e,'دریافت اتصال‌های وب‌سایت ناموفق بود.');setSitesLoadError(message);toast.error(message)})}}>تلاش دوباره</Button><Button variant="ghost" onClick={()=>setConnectOpen(true)}>اتصال سایت</Button></div></Card>:<EmptyState icon="🔌" title="سایتی متصل نیست" description="یک سایت وردپرسی را متصل کنید تا محتوای وردپرس و محصولات فروشگاه در همین داشبورد قابل مدیریت باشند." action={<Button onClick={()=>setConnectOpen(true)}>اتصال سایت</Button>}/>):<>

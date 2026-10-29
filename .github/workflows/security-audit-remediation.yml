@@ -30,7 +30,9 @@ jobs:
       - name: Install dependencies
         working-directory: postelrobbal/app
         run: npm ci
-      - name: Dependency vulnerability gate
+      - id: audit
+        name: Dependency vulnerability gate
+        continue-on-error: true
         working-directory: postelrobbal/app
         shell: bash
         run: |
@@ -62,6 +64,12 @@ jobs:
       - name: Compile backend
         working-directory: postelrobbal/app
         run: npm run build
+      - name: Enforce dependency vulnerability gate after code checks
+        if: always() && steps.audit.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Dependency audit still reports advisories. Code checks ran for diagnosis; merge and release remain blocked."
+          exit 1
 
   wordpress-plugin:
     name: WordPress connector PHP syntax
@@ -98,11 +106,11 @@ jobs:
           set -euo pipefail
           cd postelrobbal/app
           npm ci
-          npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5
+          npm install --no-fund --no-progress --save-prod drizzle-orm@0.45.4 sharp@0.35.5 zod@4.6.7
           npm install --no-fund --no-progress --save-dev drizzle-kit@0.31.11 vitest@5.0.5 vite@6.4.3
-          # drizzle-kit@0.31.11 still pulls an abandoned loader with an obsolete,
-          # vulnerable nested esbuild. Override only that transitive copy; candidate
-          # typecheck, unit tests, build and audit must all pass before commit.
+          # Upgrade Zod to the advisory-patched v4 release and keep the known
+          # esbuild override for drizzle-kit. Typecheck, unit tests, build and
+          # zero-advisory audit must all pass before lockfiles are committed.
           node <<'NODE'
           const fs = require('node:fs');
           const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -128,6 +136,31 @@ jobs:
           npm run typecheck
           npm test
           npm run build
+      - name: Prepare Passenger runtime dependency candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd postelrobbal/api
+          npm ci
+          npm install --no-fund --no-progress --save-prod zod@4.6.7
+          npm audit fix --no-fund --no-progress || true
+          mkdir -p "$RUNNER_TEMP/dependency-candidate/api"
+          cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/api/"
+          # Verify the exact production install path that deploy.sh uses under Passenger.
+          npm ci --omit=dev --no-audit --no-fund
+          npm audit --omit=dev
+          npm ls --omit=dev --depth=0
+          npm audit --json > "$RUNNER_TEMP/dependency-candidate/api/audit.json" || true
+          node - "$RUNNER_TEMP/dependency-candidate/api/audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          console.log('CANDIDATE_API_AUDIT_TOTALS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(report.vulnerabilities ?? {})) {
+            const titles = (item.via ?? []).filter((via) => via && typeof via === 'object').map((via) => via.title || via.name || 'advisory');
+            console.log('CANDIDATE_API_AUDIT_ITEM', JSON.stringify({ name, severity: item.severity, direct: item.isDirect, range: item.range, fixAvailable: item.fixAvailable, advisories: [...new Set(titles)].join('; ').slice(0, 600) }));
+          }
+          NODE
+
       - name: Prepare frontend dependency candidate
         shell: bash
         run: |
@@ -150,31 +183,49 @@ jobs:
           NODE
           npm run build
       - name: Require zero dependency advisories and commit verified lockfiles
-        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'security/audit-remediation-20261016' }}
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.head.ref == 'security/audit-remediation-20261016' || github.event.pull_request.head.ref == 'fix/2026-10-28-dashboard-stability-wordpress-plugin') }}
         shell: bash
         run: |
           set -euo pipefail
-          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" <<'NODE'
+          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" "$RUNNER_TEMP/dependency-candidate/api/audit.json" "$RUNNER_TEMP/dependency-candidate/app/package.json" "$RUNNER_TEMP/dependency-candidate/api/package.json" <<'NODE'
           const fs = require('node:fs');
-          for (const file of process.argv.slice(2)) {
+          const args = process.argv.slice(2);
+          for (const file of args.slice(0, 3)) {
             const report = JSON.parse(fs.readFileSync(file, 'utf8'));
             const v = report.metadata?.vulnerabilities ?? {};
             console.log('DEPENDENCY_AUDIT_FINAL', JSON.stringify({ file, vulnerabilities: v }));
             if (Number(v.total ?? 0) !== 0) process.exitCode = 1;
           }
+          const app = JSON.parse(fs.readFileSync(args[3], 'utf8'));
+          const api = JSON.parse(fs.readFileSync(args[4], 'utf8'));
+          const stable = (value) => JSON.stringify(Object.fromEntries(Object.entries(value ?? {}).sort(([a], [b]) => a.localeCompare(b))));
+          for (const key of ['dependencies', 'overrides']) {
+            if (stable(app[key]) !== stable(api[key])) {
+              console.error('PASSENGER_RUNTIME_PARITY_FAILED', key);
+              process.exitCode = 1;
+            }
+          }
+          console.log('PASSENGER_RUNTIME_PARITY_OK');
           NODE
+          # The other CI jobs may update workflow/support files while this
+          # candidate is being audited. Rebase the generated dependency lockfiles
+          # onto the latest PR head instead of pushing a stale branch snapshot.
+          git fetch origin "$GITHUB_HEAD_REF"
+          git checkout -B "$GITHUB_HEAD_REF" "origin/$GITHUB_HEAD_REF"
           cp "$RUNNER_TEMP/dependency-candidate/app/package.json" postelrobbal/app/package.json
           cp "$RUNNER_TEMP/dependency-candidate/app/package-lock.json" postelrobbal/app/package-lock.json
           cp "$RUNNER_TEMP/dependency-candidate/frontend/package.json" postelrobbal/frontend/package.json
           cp "$RUNNER_TEMP/dependency-candidate/frontend/package-lock.json" postelrobbal/frontend/package-lock.json
+          cp "$RUNNER_TEMP/dependency-candidate/api/package.json" postelrobbal/api/package.json
+          cp "$RUNNER_TEMP/dependency-candidate/api/package-lock.json" postelrobbal/api/package-lock.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add postelrobbal/app/package.json postelrobbal/app/package-lock.json postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json
+          git add postelrobbal/app/package.json postelrobbal/app/package-lock.json postelrobbal/frontend/package.json postelrobbal/frontend/package-lock.json postelrobbal/api/package.json postelrobbal/api/package-lock.json
           if git diff --cached --quiet; then
             echo "Verified dependency candidate already matches the branch; no commit needed."
           else
-            git commit -m "security: update dependencies and remove vulnerable transitive esbuild"
-            git push origin HEAD:security/audit-remediation-20261016
+            git commit -m "security: patch zod and vulnerable transitive dependencies"
+            git push origin "HEAD:${GITHUB_HEAD_REF}"
           fi
       - name: Upload isolated dependency candidate
         if: always()
@@ -200,7 +251,9 @@ jobs:
       - name: Install dependencies
         working-directory: postelrobbal/frontend
         run: npm ci
-      - name: Dependency vulnerability gate
+      - id: audit
+        name: Dependency vulnerability gate
+        continue-on-error: true
         working-directory: postelrobbal/frontend
         shell: bash
         run: |
@@ -226,3 +279,39 @@ jobs:
       - name: Build
         working-directory: postelrobbal/frontend
         run: npm run build
+      - name: Enforce dependency vulnerability gate after code checks
+        if: always() && steps.audit.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Dependency audit still reports advisories. Frontend build ran for diagnosis; merge and release remain blocked."
+          exit 1
+
+  release-integrity:
+    name: Release scripts syntax and WordPress archive integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate deployment and release shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in postelrobbal/scripts/deploy.sh postelrobbal/scripts/make-release.sh postelrobbal/scripts/release-check.sh; do
+            bash -n "$script"
+            echo "BASH_SYNTAX_OK $script"
+          done
+      - name: Package only the canonical WordPress plugin and verify the ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          mkdir -p "$temp_dir/postelrobbal/wordpress-plugin"
+          cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$temp_dir/postelrobbal/wordpress-plugin/"
+          (cd "$temp_dir/postelrobbal/wordpress-plugin" && zip -qr postyar-wordpress.zip postyar-wordpress)
+          unzip -tq "$temp_dir/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
+          if unzip -Z1 "$temp_dir/postelrobbal/wordpress-plugin/postyar-wordpress.zip" | grep -Ev '^postyar-wordpress(/|$)' >/dev/null; then
+            echo "Unexpected path outside canonical plugin root" >&2
+            exit 1
+          fi
+          echo "WORDPRESS_PLUGIN_ARCHIVE_OK"

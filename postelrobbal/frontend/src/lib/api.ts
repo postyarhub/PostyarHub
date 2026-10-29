@@ -46,16 +46,25 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers['x-csrf-token'] = csrfToken;
   }
 
-  const res = await fetch(path, {
-    method: options.method ?? 'GET',
-    headers,
-    credentials: 'include',
-    body: options.formData
-      ? options.formData
-      : options.body !== undefined
-        ? JSON.stringify(options.body)
-        : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: options.method ?? 'GET',
+      headers,
+      credentials: 'include',
+      body: options.formData
+        ? options.formData
+        : options.body !== undefined
+          ? JSON.stringify(options.body)
+          : undefined,
+    });
+  } catch {
+    throw new ApiRequestError(
+      'NETWORK_ERROR',
+      'ارتباط با سرور برقرار نشد. اتصال را بررسی کرده و دوباره تلاش کنید.',
+      0,
+    );
+  }
 
   let payload: unknown = null;
   try {
@@ -73,7 +82,45 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       err?.requestId
     );
   }
-  return (payload as { data: T }).data;
+  // A same-origin proxy or an expired runtime can return a successful HTTP
+  // status with an empty/non-JSON body. Do not let a null dereference in the
+  // caller collapse into the generic analytics error.
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ApiRequestError(
+      'INVALID_API_RESPONSE',
+      'پاسخ سرور قابل‌خواندن نیست. ممکن است سرویس موقتاً در دسترس نباشد؛ دوباره تلاش کنید.',
+      502,
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'data')) {
+    return (payload as { data: T }).data;
+  }
+
+  const responseObject = payload as Record<string, unknown> & { error?: ApiError };
+  const err = responseObject.error;
+
+  // The live application may briefly run a backend bundle from the previous
+  // release while the static SPA is already updated. The analytics endpoints
+  // historically returned their DTO directly in some releases. Accept that
+  // legacy shape only for the two read-only analytics requests; never treat an
+  // error/success envelope without "data" as a valid DTO.
+  const isAnalyticsRead = /^\/api\/v1\/analytics\/(?:summary|events)(?:\?|$)/.test(path);
+  const isLegacyDirectPayload =
+    isAnalyticsRead &&
+    !Object.prototype.hasOwnProperty.call(responseObject, 'success') &&
+    !Object.prototype.hasOwnProperty.call(responseObject, 'error');
+
+  if (isLegacyDirectPayload) {
+    return payload as T;
+  }
+
+  throw new ApiRequestError(
+    'INVALID_API_RESPONSE',
+    err?.message ?? 'قالب پاسخ سرور با قرارداد API سازگار نیست. در صورت تکرار، این خطا را به پشتیبانی گزارش کنید.',
+    502,
+    err?.requestId,
+  );
 }
 
 export const api = {

@@ -15,7 +15,7 @@ const PERSIAN_FIELD_HINTS: Record<string, string> = {
   Invalid_enumerated_value: 'مقدار انتخابی معتبر نیست.',
 };
 
-function persianMessage(issue: { code: string; message: string; path: Array<string | number> }): string {
+function persianMessage(issue: { code: string; message: string }): string {
   const raw = issue.message.replace(/\s+/g, '_').replace(/[^A-Za-z_]/g, '_');
   if (PERSIAN_FIELD_HINTS[raw]) return PERSIAN_FIELD_HINTS[raw];
   if (issue.code === 'invalid_type' && issue.message.includes('required')) return 'تکمیل این فیلد الزامی است.';

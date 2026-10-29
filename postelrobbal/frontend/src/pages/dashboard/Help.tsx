@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import '../../styles/help.css';
 
 type Lesson = {
@@ -308,6 +308,7 @@ function WarningBox({ children }: { children: ReactNode }) { return <div classNa
 function ErrorBox({ children }: { children: ReactNode }) { return <div className="help-box help-error"><strong>خطای رایج / تشخیص</strong><div>{children}</div></div>; }
 
 export default function Help() {
+  const location = useLocation();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(SECTIONS[0].id);
   const filtered = useMemo(() => {
@@ -315,6 +316,33 @@ export default function Help() {
     if (!q) return SECTIONS;
     return SECTIONS.map((section) => ({ ...section, lessons: section.lessons.filter((lesson) => [section.title, section.intro, lesson.title, lesson.what, ...lesson.steps, lesson.example, lesson.warning, lesson.error].filter(Boolean).join(' ').toLocaleLowerCase().includes(q)) })).filter((section) => section.lessons.length > 0 || section.title.toLocaleLowerCase().includes(q));
   }, [query]);
+
+  useEffect(() => {
+    const targetId = location.hash.slice(1);
+    if (!targetId) return;
+    const owningSection = SECTIONS.find(
+      (section) => section.id === targetId || section.lessons.some((lesson) => lesson.id === targetId),
+    );
+    if (!owningSection) return;
+    setActive(owningSection.id);
+    if (query) setQuery('');
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const target = document.getElementById(targetId);
+        target?.scrollIntoView({
+          block: 'start',
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [location.hash, query]);
 
   return (
     <div className="help-page" dir="rtl">
