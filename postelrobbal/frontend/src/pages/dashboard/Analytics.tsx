@@ -13,7 +13,7 @@ interface SummaryDto {
   from: string;
   to: string;
   events: { total: number; sent: number; failed: number };
-  successRate: number;
+  successRate: number | null;
   platforms: Record<PlatformKey, { sent: number; failed: number }>;
   daily: Array<{ day: string; eventName: string; count: number }>;
   topPosts: Array<{ id: string; title: string | null; events: number }>;
@@ -21,6 +21,7 @@ interface SummaryDto {
   errors: Array<{ eventType: string; count: number }>;
   links: { clicks: number };
   revenue: {
+    paymentsCreated: number;
     paymentsCompleted: number;
     paymentsCompletedRial: number;
     subscriptionRevenueRial: number;
@@ -38,16 +39,16 @@ interface SummaryDto {
       requested: number;
       completed: number;
       failed: number;
-      successRate: number;
+      successRate: number | null;
       tokens: number;
-      avgDurationMs: number;
+      avgDurationMs: number | null;
     };
     workflows: {
       started: number;
       completed: number;
       failed: number;
-      successRate: number;
-      avgDurationMs: number;
+      successRate: number | null;
+      avgDurationMs: number | null;
     };
     errors: Array<{
       eventType: string;
@@ -61,39 +62,144 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function hasNumericFields(value: unknown, fields: string[]): value is Record<string, number> {
+  return isRecord(value) && fields.every((field) => isFiniteNumber(value[field]));
+}
+
 /**
- * Runtime validation is required here: TypeScript interfaces do not validate
- * network data. An older/mismatched API response previously reached
- * `t.topPosts` or `summary.automation.ai` as null/undefined and was reduced to
- * the generic "دریافت آمار تحلیل ناموفق بود" message.
+ * TypeScript types do not validate network data. Validate every nested collection
+ * that the dashboard maps over and every aggregate it uses in arithmetic, so a
+ * backend/frontend version skew becomes a visible API-contract error rather than
+ * a render-time TypeError hidden behind the generic analytics failure message.
  */
 function isAnalyticsSummary(value: unknown): value is SummaryDto {
   if (!isRecord(value)) return false;
+
   const events = value.events;
   const platforms = value.platforms;
   const revenue = value.revenue;
   const links = value.links;
   const automation = value.automation;
 
-  return (
-    typeof value.days === 'number' &&
-    isRecord(events) &&
-    typeof events.total === 'number' &&
-    typeof events.sent === 'number' &&
-    typeof events.failed === 'number' &&
-    Array.isArray(value.daily) &&
-    isRecord(platforms) &&
-    isRecord(revenue) &&
-    isRecord(links) &&
-    typeof links.clicks === 'number' &&
-    isRecord(automation) &&
-    isRecord(automation.ai) &&
-    isRecord(automation.workflows) &&
-    Array.isArray(automation.errors) &&
-    (value.topPosts === undefined || Array.isArray(value.topPosts)) &&
-    (value.topCampaigns === undefined || Array.isArray(value.topCampaigns)) &&
-    (value.errors === undefined || Array.isArray(value.errors))
-  );
+  if (
+    !isFiniteNumber(value.days) ||
+    typeof value.from !== 'string' ||
+    typeof value.to !== 'string' ||
+    !isRecord(events) ||
+    !isFiniteNumber(events.total) ||
+    !isFiniteNumber(events.sent) ||
+    !isFiniteNumber(events.failed) ||
+    !isNullableNumber(value.successRate) ||
+    !Array.isArray(value.daily) ||
+    !value.daily.every((row) =>
+      isRecord(row) &&
+      typeof row.day === 'string' &&
+      typeof row.eventName === 'string' &&
+      isFiniteNumber(row.count)
+    ) ||
+    !isRecord(platforms) ||
+    !isRecord(revenue) ||
+    !isRecord(links) ||
+    !isFiniteNumber(links.clicks) ||
+    !isRecord(automation) ||
+    !isRecord(automation.ai) ||
+    !isRecord(automation.workflows) ||
+    !Array.isArray(automation.errors) ||
+    !automation.errors.every((row) =>
+      isRecord(row) &&
+      typeof row.eventType === 'string' &&
+      typeof row.errorCode === 'string' &&
+      isFiniteNumber(row.count)
+    )
+  ) {
+    return false;
+  }
+
+  const platformKeys: PlatformKey[] = ['telegram', 'bale', 'rubika', 'wordpress'];
+  if (!platformKeys.every((key) => hasNumericFields(platforms[key], ['sent', 'failed']))) {
+    return false;
+  }
+
+  const revenueFields = [
+    'paymentsCreated',
+    'paymentsCompleted',
+    'paymentsCompletedRial',
+    'subscriptionRevenueRial',
+    'walletTopupRial',
+    'paymentsFailed',
+    'subscriptionsCreated',
+    'subscriptionsRenewed',
+    'subscriptionsExpired',
+    'referralsCreated',
+    'referralRewardEvents',
+    'referralRewardPoints',
+  ];
+  if (!revenueFields.every((field) => isFiniteNumber(revenue[field]))) {
+    return false;
+  }
+
+  const ai = automation.ai;
+  const workflows = automation.workflows;
+  if (
+    !isFiniteNumber(ai.requested) ||
+    !isFiniteNumber(ai.completed) ||
+    !isFiniteNumber(ai.failed) ||
+    !isNullableNumber(ai.successRate) ||
+    !isFiniteNumber(ai.tokens) ||
+    !isNullableNumber(ai.avgDurationMs) ||
+    !isFiniteNumber(workflows.started) ||
+    !isFiniteNumber(workflows.completed) ||
+    !isFiniteNumber(workflows.failed) ||
+    !isNullableNumber(workflows.successRate) ||
+    !isNullableNumber(workflows.avgDurationMs)
+  ) {
+    return false;
+  }
+
+  if (value.topPosts !== undefined && (
+    !Array.isArray(value.topPosts) ||
+    !value.topPosts.every((row) =>
+      isRecord(row) &&
+      typeof row.id === 'string' &&
+      (row.title === null || typeof row.title === 'string') &&
+      isFiniteNumber(row.events)
+    )
+  )) {
+    return false;
+  }
+
+  if (value.topCampaigns !== undefined && (
+    !Array.isArray(value.topCampaigns) ||
+    !value.topCampaigns.every((row) =>
+      isRecord(row) &&
+      typeof row.id === 'string' &&
+      typeof row.name === 'string' &&
+      isFiniteNumber(row.events)
+    )
+  )) {
+    return false;
+  }
+
+  if (value.errors !== undefined && (
+    !Array.isArray(value.errors) ||
+    !value.errors.every((row) =>
+      isRecord(row) &&
+      typeof row.eventType === 'string' &&
+      isFiniteNumber(row.count)
+    )
+  )) {
+    return false;
+  }
+
+  return true;
 }
 
 interface EventsDto {
