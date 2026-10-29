@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, asc, desc, eq, gte, inArray, like, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, like, lt, or, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { analyticsEvents, analyticsLinkClicks, analyticsLinks, channels, posts, postTargets, wordpressCampaigns, wordpressSites } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
@@ -332,10 +332,7 @@ export async function getTenantAnalytics(tenantId: string, days = 30) {
         gte(analyticsEvents.occurredAt, since),
         or(
           inArray(analyticsEvents.eventType, ANALYTICS_SUMMARY_EVENT_TYPES),
-          and(
-            like(analyticsEvents.eventType, '%.failed'),
-            ne(analyticsEvents.eventType, 'post.failed'),
-          ),
+          like(analyticsEvents.eventType, '%.failed'),
         ),
       )),
     db.select({ day: sql<string>`DATE(${analyticsEvents.occurredAt})`, eventName: analyticsEvents.eventType, count: sql<number>`COUNT(*)` }).from(analyticsEvents).where(and(eq(analyticsEvents.userId, tenantId), gte(analyticsEvents.occurredAt, since))).groupBy(sql`DATE(${analyticsEvents.occurredAt})`, analyticsEvents.eventType).orderBy(asc(sql`DATE(${analyticsEvents.occurredAt})`)),
