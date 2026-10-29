@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, asc, desc, eq, gte, inArray, like, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, like, lt, ne, or, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { analyticsEvents, analyticsLinkClicks, analyticsLinks, channels, posts, postTargets, wordpressCampaigns, wordpressSites } from '../../db/schema.js';
 import { newId } from '../../core/ids.js';
@@ -11,8 +11,6 @@ const ANALYTICS_MAX_DAYS = 90;
 // but not every event row. Keep this fetch bounded to event types that feed those
 // calculations; total event count is computed by SQL below.
 const ANALYTICS_SUMMARY_EVENT_TYPES: string[] = [
-  'post.sent',
-  'post.failed',
   'payment.created',
   'payment.completed',
   'payment.failed',
@@ -334,7 +332,10 @@ export async function getTenantAnalytics(tenantId: string, days = 30) {
         gte(analyticsEvents.occurredAt, since),
         or(
           inArray(analyticsEvents.eventType, ANALYTICS_SUMMARY_EVENT_TYPES),
-          like(analyticsEvents.eventType, '%.failed'),
+          and(
+            like(analyticsEvents.eventType, '%.failed'),
+            ne(analyticsEvents.eventType, 'post.failed'),
+          ),
         ),
       )),
     db.select({ day: sql<string>`DATE(${analyticsEvents.occurredAt})`, eventName: analyticsEvents.eventType, count: sql<number>`COUNT(*)` }).from(analyticsEvents).where(and(eq(analyticsEvents.userId, tenantId), gte(analyticsEvents.occurredAt, since))).groupBy(sql`DATE(${analyticsEvents.occurredAt})`, analyticsEvents.eventType).orderBy(asc(sql`DATE(${analyticsEvents.occurredAt})`)),
@@ -352,16 +353,19 @@ export async function getTenantAnalytics(tenantId: string, days = 30) {
   // Event KPIs must therefore count rows rather than summing value.
   const totalEvents = toFiniteInt(totalRows[0]?.count);
   const automation = summarizeAutomationRows(eventRows);
-  const sent = eventRows.filter((row) => row.eventType === 'post.sent').length;
-  const failed = eventRows.filter((row) => row.eventType === 'post.failed').length;
-
   const platforms = emptyPlatformMap();
+  let sent = 0;
+  let failed = 0;
   for (const row of platformRows) {
+    const count = toFiniteInt(row.count);
+    if (row.eventType === 'post.sent') sent += count;
+    else if (row.eventType === 'post.failed') failed += count;
+
     const platform = String(row.platform ?? '');
     if (!(platform in platforms)) continue;
     const key = row.eventType === 'post.sent' ? 'sent' : 'failed';
     const bucket = (platforms as Record<string, Record<string, number>>)[platform];
-    if (bucket) bucket[key] = toFiniteInt(row.count);
+    if (bucket) bucket[key] = count;
   }
 
   const topPostIds = postRows.map((r) => r.postId).filter((v): v is string => Boolean(v));
