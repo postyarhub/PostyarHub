@@ -112,18 +112,18 @@ const planPatchSchema = z.object({
   priceRial: z.coerce.number().int().min(0).optional(),
   periodDays: z.coerce.number().int().min(1).max(3650).optional(),
   isActive: z.boolean().optional(),
-  limitsJson: z.record(z.unknown()).optional(),
-  featuresJson: z.record(z.unknown()).optional(),
-  pricingJson: z.record(z.unknown()).optional(),
+  limitsJson: z.record(z.string(), z.unknown()).optional(),
+  featuresJson: z.record(z.string(), z.unknown()).optional(),
+  pricingJson: z.record(z.string(), z.unknown()).optional(),
 });
 const planCreateSchema = z.object({
   code: z.string().min(2).max(40).regex(/^[a-z0-9_-]+$/),
   nameFa: z.string().min(2).max(80),
   priceRial: z.coerce.number().int().min(0),
   periodDays: z.coerce.number().int().min(1).max(3650).default(30),
-  limitsJson: z.record(z.unknown()).optional(),
-  featuresJson: z.record(z.unknown()).optional(),
-  pricingJson: z.record(z.unknown()).optional(),
+  limitsJson: z.record(z.string(), z.unknown()).optional(),
+  featuresJson: z.record(z.string(), z.unknown()).optional(),
+  pricingJson: z.record(z.string(), z.unknown()).optional(),
 });
 const settingsSchema = z
   .record(z.unknown())
