@@ -126,7 +126,7 @@ const planCreateSchema = z.object({
   pricingJson: z.record(z.string(), z.unknown()).optional(),
 });
 const settingsSchema = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .refine((r) => Object.keys(r).length > 0, { message: 'بدنهٔ تنظیمات خالی است.' });
 
 // Payment gateway settings (contract 14-contract item 2). cardToCardCards is
