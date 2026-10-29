@@ -53,7 +53,7 @@ jobs:
           OUT="$RUNNER_TEMP/postyar-release-output"
           STAGE="$RUNNER_TEMP/postyar-release-stage"
           RELEASE="$STAGE/POSTYAR-SECURITY-RELEASE-20261016"
-          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/database" "$RELEASE/postelrobbal/wordpress-plugin"
+          mkdir -p "$OUT" "$RELEASE/_release" "$RELEASE/postelrobbal/app" "$RELEASE/postelrobbal/frontend" "$RELEASE/postelrobbal/api" "$RELEASE/postelrobbal/database" "$RELEASE/postelrobbal/wordpress-plugin" "$RELEASE/postelrobbal/config" "$RELEASE/postelrobbal/workers" "$RELEASE/postelrobbal/scheduler" "$RELEASE/postelrobbal/scripts" "$RELEASE/public_html"
 
           # Source + exact compiled output. Never package node_modules, .env, logs, backups,
           # user files, runtime data, database files or host configuration.
@@ -70,8 +70,44 @@ jobs:
 
           cp -a postelrobbal/api/app.js postelrobbal/api/package.json postelrobbal/api/package-lock.json "$RELEASE/postelrobbal/api/"
           cp -a postelrobbal/wordpress-plugin/postyar-wordpress "$RELEASE/postelrobbal/wordpress-plugin/"
+
+          # The host deploy script depends on these committed, non-secret
+          # runtime/support files. Never package .env or host-local config.
+          cp -a postelrobbal/config/load-env.cjs "$RELEASE/postelrobbal/config/"
+          cp -a postelrobbal/workers/worker.js postelrobbal/workers/run-worker.sh "$RELEASE/postelrobbal/workers/"
+          cp -a postelrobbal/scheduler/scheduler.js postelrobbal/scheduler/run-scheduler.sh "$RELEASE/postelrobbal/scheduler/"
+          cp -a postelrobbal/scripts/deploy.sh postelrobbal/scripts/activate-workers.sh "$RELEASE/postelrobbal/scripts/"
+
+          # Preserve the complete SEO/static site (.htaccess, routes, images,
+          # fonts and public files), then overlay the freshly built SPA.
+          cp -a public_html/. "$RELEASE/public_html/"
+          cp -a postelrobbal/frontend/dist/. "$RELEASE/public_html/"
+          rm -rf "$RELEASE/public_html/assets"
+          cp -a postelrobbal/frontend/dist/assets "$RELEASE/public_html/assets"
+
           (cd "$RELEASE/postelrobbal/wordpress-plugin" && zip -qr postyar-wordpress.zip postyar-wordpress)
           unzip -tq "$RELEASE/postelrobbal/wordpress-plugin/postyar-wordpress.zip"
+
+          # Fail packaging before checksum/archive creation if any required
+          # deploy component is absent. These checks mirror deploy.sh preflight.
+          for required in \
+            "$RELEASE/public_html/index.html" \
+            "$RELEASE/public_html/.htaccess" \
+            "$RELEASE/postelrobbal/app/dist/server.js" \
+            "$RELEASE/postelrobbal/api/app.js" \
+            "$RELEASE/postelrobbal/api/package-lock.json" \
+            "$RELEASE/postelrobbal/config/load-env.cjs" \
+            "$RELEASE/postelrobbal/workers/worker.js" \
+            "$RELEASE/postelrobbal/workers/run-worker.sh" \
+            "$RELEASE/postelrobbal/scheduler/scheduler.js" \
+            "$RELEASE/postelrobbal/scheduler/run-scheduler.sh" \
+            "$RELEASE/postelrobbal/scripts/deploy.sh" \
+            "$RELEASE/postelrobbal/scripts/activate-workers.sh" \
+            "$RELEASE/postelrobbal/wordpress-plugin/postyar-wordpress.zip"; do
+            test -s "$required" || { echo "Required release component missing: $required" >&2; exit 1; }
+          done
+          bash -n "$RELEASE/postelrobbal/scripts/deploy.sh"
+          bash -n "$RELEASE/postelrobbal/scripts/activate-workers.sh"
 
           printf 'release_commit=%s\n' "$(git rev-parse HEAD)" > "$RELEASE/_release/metadata.txt"
           printf 'release_branch=%s\n' "${GITHUB_REF_NAME:-unknown}" >> "$RELEASE/_release/metadata.txt"
