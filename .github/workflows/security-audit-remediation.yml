@@ -146,6 +146,10 @@ jobs:
           npm audit fix --no-fund --no-progress || true
           mkdir -p "$RUNNER_TEMP/dependency-candidate/api"
           cp package.json package-lock.json "$RUNNER_TEMP/dependency-candidate/api/"
+          # Verify the exact production install path that deploy.sh uses under Passenger.
+          npm ci --omit=dev --no-audit --no-fund
+          npm audit --omit=dev
+          npm ls --omit=dev --depth=0
           npm audit --json > "$RUNNER_TEMP/dependency-candidate/api/audit.json" || true
           node - "$RUNNER_TEMP/dependency-candidate/api/audit.json" <<'NODE'
           const fs = require('node:fs');
@@ -183,14 +187,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" "$RUNNER_TEMP/dependency-candidate/api/audit.json" <<'NODE'
+          node - "$RUNNER_TEMP/dependency-candidate/app/audit.json" "$RUNNER_TEMP/dependency-candidate/frontend/audit.json" "$RUNNER_TEMP/dependency-candidate/api/audit.json" "$RUNNER_TEMP/dependency-candidate/app/package.json" "$RUNNER_TEMP/dependency-candidate/api/package.json" <<'NODE'
           const fs = require('node:fs');
-          for (const file of process.argv.slice(2)) {
+          const args = process.argv.slice(2);
+          for (const file of args.slice(0, 3)) {
             const report = JSON.parse(fs.readFileSync(file, 'utf8'));
             const v = report.metadata?.vulnerabilities ?? {};
             console.log('DEPENDENCY_AUDIT_FINAL', JSON.stringify({ file, vulnerabilities: v }));
             if (Number(v.total ?? 0) !== 0) process.exitCode = 1;
           }
+          const app = JSON.parse(fs.readFileSync(args[3], 'utf8'));
+          const api = JSON.parse(fs.readFileSync(args[4], 'utf8'));
+          const stable = (value) => JSON.stringify(Object.fromEntries(Object.entries(value ?? {}).sort(([a], [b]) => a.localeCompare(b))));
+          for (const key of ['dependencies', 'overrides']) {
+            if (stable(app[key]) !== stable(api[key])) {
+              console.error('PASSENGER_RUNTIME_PARITY_FAILED', key);
+              process.exitCode = 1;
+            }
+          }
+          console.log('PASSENGER_RUNTIME_PARITY_OK');
           NODE
           # The other CI jobs may update workflow/support files while this
           # candidate is being audited. Rebase the generated dependency lockfiles
