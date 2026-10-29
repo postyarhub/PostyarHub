@@ -832,7 +832,7 @@ export default function Analytics() {
           title="پست‌های پرتراکنش"
           description="نام پست، کانال مقصد، پلتفرم و نتیجه‌ی ارسال."
         >
-          {summary.topPosts.length === 0 ? (
+          {(summary.topPosts ?? []).length === 0 ? (
             <EmptyState
               icon="📊"
               title="داده‌ای ثبت نشده"
@@ -840,7 +840,7 @@ export default function Analytics() {
             />
           ) : (
             <div className="analytics-v4-posts">
-              {summary.topPosts.slice(0, 5).map((post) => {
+              {(summary.topPosts ?? []).slice(0, 5).map((post) => {
                 const detail = postDetails[post.id];
                 const groups = new Map<
                   string,
