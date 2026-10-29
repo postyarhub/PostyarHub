@@ -71,7 +71,7 @@ const templateInputSchema = z.object({
   body: z.string().min(1).max(12000),
   category: z.string().max(40).optional(),
   isDefault: z.boolean().optional(),
-  settingsJson: z.record(z.unknown()).nullable().optional(),
+  settingsJson: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const campaignInputSchema = z.object({
@@ -262,13 +262,13 @@ export async function registerWordpressRoutes(app: FastifyInstance): Promise<voi
     const siteKey = typeof req.headers['x-postyar-site-key'] === 'string' ? req.headers['x-postyar-site-key'] : '';
     const secret = typeof req.headers['x-postyar-secret'] === 'string' ? req.headers['x-postyar-secret'] : '';
     const site = await verifySiteRequest(siteKey, secret); if (!site) return fail(reply, 401, 'UNAUTHORIZED', 'اعتبارنامهٔ سایت معتبر نیست.');
-    const input = parse(z.object({ autoPublish:z.boolean().optional(), channelIds:z.array(z.string()).max(5).optional(), automation:z.record(z.unknown()).optional(), messageStyle:z.enum(['shop','minimal','sale']).optional(), sendImage:z.boolean().optional() }), req.body);
+    const input = parse(z.object({ autoPublish:z.boolean().optional(), channelIds:z.array(z.string()).max(5).optional(), automation:z.record(z.string(), z.unknown()).optional(), messageStyle:z.enum(['shop','minimal','sale']).optional(), sendImage:z.boolean().optional() }), req.body);
     return { success: true, data: await updateSiteSettings(site.tenantId, site.id, input) };
   });
 
   app.put('/wordpress/sites/:id', { preHandler: [app.requireAuth] }, async (req) => {
     const me = auth(req); const { id } = req.params as { id: string };
-    const input = parse(z.object({ autoPublish: z.boolean().optional(), channelIds:z.array(z.string()).max(5).optional(), automation:z.record(z.unknown()).optional(), messageStyle:z.enum(['shop','minimal','sale']).optional(), sendImage:z.boolean().optional() }), req.body);
+    const input = parse(z.object({ autoPublish: z.boolean().optional(), channelIds:z.array(z.string()).max(5).optional(), automation:z.record(z.string(), z.unknown()).optional(), messageStyle:z.enum(['shop','minimal','sale']).optional(), sendImage:z.boolean().optional() }), req.body);
     const site = await updateSiteSettings(me.id, id, input); return { success: true, data: { site } };
   });
 
