@@ -9,7 +9,29 @@ on:
       - 'postelrobbal/frontend/**'
       - 'postelrobbal/api/package.json'
       - 'postelrobbal/api/package-lock.json'
+      - 'postelrobbal/config/load-env.cjs'
+      - 'postelrobbal/workers/**'
+      - 'postelrobbal/scheduler/**'
+      - 'postelrobbal/scripts/deploy.sh'
+      - 'postelrobbal/scripts/activate-workers.sh'
       - 'postelrobbal/wordpress-plugin/postyar-wordpress/**'
+      - 'public_html/**'
+      - '.github/workflows/postyar-security-release-bundle.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'postelrobbal/app/**'
+      - 'postelrobbal/database/migrations/**'
+      - 'postelrobbal/frontend/**'
+      - 'postelrobbal/api/package.json'
+      - 'postelrobbal/api/package-lock.json'
+      - 'postelrobbal/config/load-env.cjs'
+      - 'postelrobbal/workers/**'
+      - 'postelrobbal/scheduler/**'
+      - 'postelrobbal/scripts/deploy.sh'
+      - 'postelrobbal/scripts/activate-workers.sh'
+      - 'postelrobbal/wordpress-plugin/postyar-wordpress/**'
+      - 'public_html/**'
       - '.github/workflows/postyar-security-release-bundle.yml'
   workflow_dispatch:
 
@@ -21,7 +43,7 @@ jobs:
     name: Build one prebuilt production release bundle
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact main commit
+      - name: Checkout exact release candidate commit
         uses: actions/checkout@v4
 
       - name: Set up Node.js 22
