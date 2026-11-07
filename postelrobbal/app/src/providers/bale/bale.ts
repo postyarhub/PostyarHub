@@ -257,6 +257,11 @@ export class BaleAdapter implements ProviderAdapter {
     return { ok: true, messageId: String(firstMessageId) };
   }
 
+  async editMessageText(token: string, chatRef: string, messageId: string, text: string): Promise<void> {
+    const chatId = await resolveChatId(token, chatRef);
+    await call(token, 'editMessageText', { chat_id: chatId, message_id: Number(messageId), text });
+  }
+
   async editMessageCaption(token: string, chatRef: string, messageId: string, caption: string): Promise<void> {
     const chatId = await resolveChatId(token, chatRef);
     await call(token, 'editMessageCaption', { chat_id: chatId, message_id: Number(messageId), caption });
