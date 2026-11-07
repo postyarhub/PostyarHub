@@ -390,6 +390,17 @@ export const postTargets = mysqlTable('post_targets', {
   attempts: int('attempts').notNull().default(0),
   nextRetryAt: datetime('next_retry_at'),
   providerMessageId: varchar('provider_message_id', { length: 190 }),
+  /** Exact sender and destination used at delivery time; needed for safe later edits. */
+  providerBotId: char('provider_bot_id', { length: 26 }),
+  providerChatRef: varchar('provider_chat_ref', { length: 190 }),
+  /** Message carrying the editable text; may differ from providerMessageId for long media captions. */
+  providerTextMessageId: varchar('provider_text_message_id', { length: 190 }),
+  providerTextKind: mysqlEnum('provider_text_kind', ['TEXT', 'CAPTION']),
+  providerText: text('provider_text'),
+  providerParseMode: mysqlEnum('provider_parse_mode', ['NONE', 'HTML', 'MARKDOWN']).notNull().default('NONE'),
+  editedAt: datetime('edited_at'),
+  editState: mysqlEnum('edit_state', ['IDLE', 'PROCESSING']).notNull().default('IDLE'),
+  editLockUntil: datetime('edit_lock_until'),
   errorCode: varchar('error_code', { length: 80 }),
   errorMessage: varchar('error_message', { length: 255 }),
   sentAt: datetime('sent_at'),
