@@ -623,11 +623,22 @@ function escapePublishedFooter(input: string, parseMode: ParseMode): string {
 }
 
 function safePublishedEditError(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<object>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error && current.message) messages.push(current.message);
+    else if ('message' in current && typeof (current as { message?: unknown }).message === 'string') {
+      messages.push((current as { message: string }).message);
+    }
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  if (/message is not modified/i.test(messages.join(' '))) return '';
   if (error && typeof error === 'object' && 'userMessageFa' in error) {
     const message = (error as { userMessageFa?: unknown }).userMessageFa;
     if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 255);
   }
-  if (error instanceof Error && /message is not modified/i.test(error.message)) return '';
   return 'ویرایش در پیام‌رسان مقصد انجام نشد؛ اتصال و دسترسی ربات را بررسی کنید.';
 }
 
@@ -904,11 +915,11 @@ export async function updatePublishedPostText(
     } catch (error) {
       const safeMessage = safePublishedEditError(error);
       if (!safeMessage) {
-        await db.update(postTargets)
+        const released = await db.update(postTargets)
           .set({
             editState: 'IDLE',
             editLockUntil: null,
-          editLockToken: null,
+            editLockToken: null,
             providerTextMessageId: item.messageId,
             providerTextKind: item.kind,
             providerText: item.text,
@@ -921,8 +932,20 @@ export async function updatePublishedPostText(
             eq(postTargets.id, item.targetId),
             eq(postTargets.tenantId, tenantId),
             eq(postTargets.editState, 'PROCESSING'),
-          eq(postTargets.editLockToken, item.lockToken),
+            eq(postTargets.editLockToken, item.lockToken),
           ));
+        if (affectedRowsOf(released) === 0) {
+          results.push({
+            targetId: item.targetId,
+            channelId: item.channelId,
+            channelTitle: item.channelTitle,
+            platform: item.platform,
+            success: false,
+            errorCode: 'EDIT_LOCK_LOST',
+            errorMessage: 'قفل ویرایش این مقصد در حین درخواست به عملیات دیگری واگذار شده است.',
+          });
+          continue;
+        }
         updatedCount += 1;
         results.push({
           targetId: item.targetId,
