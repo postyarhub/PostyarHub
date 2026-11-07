@@ -401,6 +401,8 @@ export const postTargets = mysqlTable('post_targets', {
   editedAt: datetime('edited_at'),
   editState: mysqlEnum('edit_state', ['IDLE', 'PROCESSING']).notNull().default('IDLE'),
   editLockUntil: datetime('edit_lock_until'),
+  editErrorCode: varchar('edit_error_code', { length: 80 }),
+  editErrorMessage: varchar('edit_error_message', { length: 255 }),
   errorCode: varchar('error_code', { length: 80 }),
   errorMessage: varchar('error_message', { length: 255 }),
   sentAt: datetime('sent_at'),
