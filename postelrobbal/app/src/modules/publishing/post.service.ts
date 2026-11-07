@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, like, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, like, lt, or, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { bots, channels, media, outboxEvents, postTargets, posts, users } from '../../db/schema.js';
 import type { PostButtons } from '../../db/schema.js';
@@ -71,6 +71,9 @@ export interface TargetView {
   providerMessageId: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  editErrorCode: string | null;
+  editErrorMessage: string | null;
+  editedAt: Date | null;
   sentAt: Date | null;
   nextRetryAt: Date | null;
   platform: 'telegram' | 'bale' | 'rubika';
@@ -685,6 +688,7 @@ export async function updatePublishedPostText(
     }
 
     const hasMedia = (Array.isArray(post.mediaIds) && post.mediaIds.length > 0) || Boolean(post.mediaId);
+    assertFooterLengths(body, post.buttonsJson);
     if (!body && !hasMedia) {
       throw new AppError(ERR.VALIDATION('متن پست نمی‌تواند خالی باشد؛ مگر اینکه رسانه‌ای به پست پیوست شده باشد.'));
     }
@@ -806,7 +810,7 @@ export async function updatePublishedPostText(
           eq(postTargets.id, target.targetId),
           eq(postTargets.tenantId, tenantId),
           eq(postTargets.state, 'SENT'),
-          or(eq(postTargets.editState, 'IDLE'), lt(postTargets.editLockUntil, now)),
+          or(eq(postTargets.editState, 'IDLE'), lt(postTargets.editLockUntil, now), and(eq(postTargets.editState, 'PROCESSING'), isNull(postTargets.editLockUntil))),
         ));
       if (affectedRowsOf(claim) === 0) {
         throw new AppError(ERR.CONFLICT('وضعیت ویرایش یکی از مقصدها همزمان تغییر کرده است؛ صفحه را تازه کنید.'));
@@ -1091,6 +1095,9 @@ export async function getPost(
       providerMessageId: postTargets.providerMessageId,
       errorCode: postTargets.errorCode,
       errorMessage: postTargets.errorMessage,
+      editErrorCode: postTargets.editErrorCode,
+      editErrorMessage: postTargets.editErrorMessage,
+      editedAt: postTargets.editedAt,
       sentAt: postTargets.sentAt,
       nextRetryAt: postTargets.nextRetryAt,
       platform: channels.platform,
