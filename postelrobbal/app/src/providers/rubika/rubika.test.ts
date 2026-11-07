@@ -80,6 +80,6 @@ describe('Rubika published message editing', () => {
 
   it('does not expose a separate caption edit method that Rubika does not document', () => {
     const adapter = new RubikaAdapter();
-    expect(adapter.editMessageCaption).toBeUndefined();
+    expect('editMessageCaption' in adapter).toBe(false);
   });
 });
