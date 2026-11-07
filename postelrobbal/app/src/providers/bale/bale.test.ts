@@ -123,3 +123,29 @@ describe('Bale request encoding and inline keyboard payload', () => {
   });
 
 });
+
+describe('Bale published message editing', () => {
+  beforeEach(() => {
+    httpJsonMock.mockReset();
+    httpJsonMock.mockResolvedValue({ status: 200, data: { ok: true, result: true } });
+  });
+
+  it('edits existing text and captions without changing the target chat or message', async () => {
+    const adapter = new BaleAdapter();
+    await adapter.editMessageText('TOKEN', '-100123', '901', 'updated text');
+    const [textUrl, textOptions] = httpJsonMock.mock.calls[0] as [string, { body?: string }];
+    expect(textUrl).toBe('https://tapi.bale.ai/botTOKEN/editMessageText');
+    const textPayload = new URLSearchParams(textOptions.body ?? '');
+    expect(textPayload.get('chat_id')).toBe('-100123');
+    expect(textPayload.get('message_id')).toBe('901');
+    expect(textPayload.get('text')).toBe('updated text');
+
+    await adapter.editMessageCaption('TOKEN', '-100123', '902', 'new caption');
+    const [captionUrl, captionOptions] = httpJsonMock.mock.calls[1] as [string, { body?: string }];
+    expect(captionUrl).toBe('https://tapi.bale.ai/botTOKEN/editMessageCaption');
+    const captionPayload = new URLSearchParams(captionOptions.body ?? '');
+    expect(captionPayload.get('chat_id')).toBe('-100123');
+    expect(captionPayload.get('message_id')).toBe('902');
+    expect(captionPayload.get('caption')).toBe('new caption');
+  });
+});
