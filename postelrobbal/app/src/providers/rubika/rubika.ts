@@ -162,12 +162,6 @@ export class RubikaAdapter implements ProviderAdapter {
     await call(token, 'editMessageText', { chat_id: chatRef, message_id: messageId, text });
   }
 
-  async editMessageCaption(token: string, chatRef: string, messageId: string, caption: string): Promise<void> {
-    // Rubika's public Bot API exposes editMessageText for bot-authored messages;
-    // it does not document a separate editMessageCaption method.
-    await this.editMessageText(token, chatRef, messageId, caption);
-  }
-
   async deleteMessage(token: string, chatRef: string, messageId: string): Promise<void> {
     await call(token, 'deleteMessage', { chat_id: chatRef, message_id: messageId });
   }
