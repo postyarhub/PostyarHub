@@ -879,7 +879,7 @@ export async function updatePublishedPostText(
         await provider.editMessageText(token, item.chatRef, item.messageId, item.text, item.parseMode);
       }
 
-      await db.update(postTargets)
+      const updated = await db.update(postTargets)
         .set({
           editState: 'IDLE',
           editLockUntil: null,
