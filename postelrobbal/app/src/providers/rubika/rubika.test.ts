@@ -78,15 +78,8 @@ describe('Rubika published message editing', () => {
     });
   });
 
-  it('maps media text edits to the documented editMessageText operation', async () => {
-    httpJsonMock.mockReset();
-    httpJsonMock.mockResolvedValue({ status: 200, data: { ok: true, result: true } });
+  it('does not expose a separate caption edit method that Rubika does not document', () => {
     const adapter = new RubikaAdapter();
-    await adapter.editMessageCaption('TOKEN', 'chat-xyz-123', 'msg-78', 'caption text');
-    const [url, options] = httpJsonMock.mock.calls[0] as [string, { body?: string }];
-    expect(url).toBe('https://botapi.rubika.ir/v3/TOKEN/editMessageText');
-    expect(JSON.parse(options.body ?? '')).toEqual({
-      chat_id: 'chat-xyz-123', message_id: 'msg-78', text: 'caption text',
-    });
+    expect(adapter.editMessageCaption).toBeUndefined();
   });
 });
