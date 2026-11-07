@@ -8,4 +8,6 @@ ALTER TABLE post_targets
   ADD COLUMN provider_parse_mode ENUM('NONE', 'HTML', 'MARKDOWN') NOT NULL DEFAULT 'NONE' AFTER provider_text,
   ADD COLUMN edited_at DATETIME NULL AFTER sent_at,
   ADD COLUMN edit_state ENUM('IDLE', 'PROCESSING') NOT NULL DEFAULT 'IDLE' AFTER edited_at,
-  ADD COLUMN edit_lock_until DATETIME NULL AFTER edit_state;
+  ADD COLUMN edit_lock_until DATETIME NULL AFTER edit_state,
+  ADD COLUMN edit_error_code VARCHAR(80) NULL AFTER edit_lock_until,
+  ADD COLUMN edit_error_message VARCHAR(255) NULL AFTER edit_error_code;
