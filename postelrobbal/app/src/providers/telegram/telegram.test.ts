@@ -147,3 +147,27 @@ describe('Telegram media delivery payload', () => {
     expect(httpJsonMock).not.toHaveBeenCalled();
   });
 });
+
+describe('Telegram published message editing', () => {
+  beforeEach(() => {
+    httpJsonMock.mockReset();
+    httpJsonMock.mockResolvedValue({ status: 200, data: { ok: true, result: true } });
+  });
+
+  it('keeps the original channel and message ID when editing text and captions', async () => {
+    const adapter = new TelegramAdapter();
+    await adapter.editMessageText('TOKEN', '-100123', '901', '<b>updated</b>', 'HTML');
+    const [textUrl, textOptions] = httpJsonMock.mock.calls[0] as [string, { body?: string }];
+    expect(textUrl).toBe('https://api.telegram.org/botTOKEN/editMessageText');
+    expect(JSON.parse(textOptions.body ?? '')).toEqual({
+      chat_id: '-100123', message_id: 901, text: '<b>updated</b>', parse_mode: 'HTML',
+    });
+
+    await adapter.editMessageCaption('TOKEN', '-100123', '902', 'new caption', 'MARKDOWN');
+    const [captionUrl, captionOptions] = httpJsonMock.mock.calls[1] as [string, { body?: string }];
+    expect(captionUrl).toBe('https://api.telegram.org/botTOKEN/editMessageCaption');
+    expect(JSON.parse(captionOptions.body ?? '')).toEqual({
+      chat_id: '-100123', message_id: 902, caption: 'new caption', parse_mode: 'MarkdownV2',
+    });
+  });
+});
