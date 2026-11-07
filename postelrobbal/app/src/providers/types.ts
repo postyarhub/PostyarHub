@@ -68,7 +68,8 @@ export interface ProviderAdapter {
   sendMedia(token: string, input: SendMediaInput): Promise<SendResult>;
   /** Optional official album endpoint; absent adapters use sequential media sends. */
   sendMediaGroup?(token: string, input: SendMediaGroupInput): Promise<SendResult>;
-  editMessageCaption?(token: string, chatRef: string, messageId: string, caption: string): Promise<void>;
+  editMessageText?(token: string, chatRef: string, messageId: string, text: string, parseMode?: 'NONE' | 'HTML' | 'MARKDOWN'): Promise<void>;
+  editMessageCaption?(token: string, chatRef: string, messageId: string, caption: string, parseMode?: 'NONE' | 'HTML' | 'MARKDOWN'): Promise<void>;
   deleteMessage?(token: string, chatRef: string, messageId: string): Promise<void>;
   setWebhook?(token: string, url: string, secret?: string): Promise<void>;
   deleteWebhook?(token: string): Promise<void>;
