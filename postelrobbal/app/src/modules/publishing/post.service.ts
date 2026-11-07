@@ -666,6 +666,7 @@ export async function updatePublishedPostText(
     kind: 'TEXT' | 'CAPTION';
     text: string;
     parseMode: ParseMode;
+    lockToken: string;
   };
 
   const prepared: PreparedEdit[] = [];
@@ -807,8 +808,9 @@ export async function updatePublishedPostText(
         continue;
       }
 
+      const lockToken = newId();
       const claim = await tx.update(postTargets)
-        .set({ editState: 'PROCESSING', editLockUntil: lockUntil, editErrorCode: null, editErrorMessage: null })
+        .set({ editState: 'PROCESSING', editLockUntil: lockUntil, editLockToken: lockToken, editErrorCode: null, editErrorMessage: null })
         .where(and(
           eq(postTargets.id, target.targetId),
           eq(postTargets.tenantId, tenantId),
@@ -830,6 +832,7 @@ export async function updatePublishedPostText(
         kind: kind!,
         text: targetText,
         parseMode: targetParseMode,
+        lockToken,
       });
     }
   });
@@ -869,6 +872,7 @@ export async function updatePublishedPostText(
         .set({
           editState: 'IDLE',
           editLockUntil: null,
+          editLockToken: null,
           providerTextMessageId: item.messageId,
           providerTextKind: item.kind,
           providerText: item.text,
@@ -881,7 +885,11 @@ export async function updatePublishedPostText(
           eq(postTargets.id, item.targetId),
           eq(postTargets.tenantId, tenantId),
           eq(postTargets.editState, 'PROCESSING'),
+          eq(postTargets.editLockToken, item.lockToken),
         ));
+      if (affectedRowsOf(updated) === 0) {
+        throw new Error('قفل ویرایش این مقصد در حین درخواست به عملیات دیگری واگذار شده است.');
+      }
 
       updatedCount += 1;
       results.push({
@@ -900,6 +908,7 @@ export async function updatePublishedPostText(
           .set({
             editState: 'IDLE',
             editLockUntil: null,
+          editLockToken: null,
             providerTextMessageId: item.messageId,
             providerTextKind: item.kind,
             providerText: item.text,
@@ -912,6 +921,7 @@ export async function updatePublishedPostText(
             eq(postTargets.id, item.targetId),
             eq(postTargets.tenantId, tenantId),
             eq(postTargets.editState, 'PROCESSING'),
+          eq(postTargets.editLockToken, item.lockToken),
           ));
         updatedCount += 1;
         results.push({
@@ -930,6 +940,7 @@ export async function updatePublishedPostText(
         .set({
           editState: 'IDLE',
           editLockUntil: null,
+          editLockToken: null,
           editErrorCode: 'PROVIDER_EDIT_FAILED',
           editErrorMessage: safeMessage,
         })
@@ -937,6 +948,7 @@ export async function updatePublishedPostText(
           eq(postTargets.id, item.targetId),
           eq(postTargets.tenantId, tenantId),
           eq(postTargets.editState, 'PROCESSING'),
+          eq(postTargets.editLockToken, item.lockToken),
         ));
 
       results.push({
