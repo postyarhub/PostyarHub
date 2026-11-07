@@ -729,6 +729,10 @@ export async function updatePublishedPostText(
       const provider = getProvider(platform);
       const caps = provider.capabilities();
 
+      if (target.editState === 'PROCESSING' && target.editLockUntil && target.editLockUntil.getTime() > now.getTime()) {
+        throw new AppError(ERR.CONFLICT('ویرایش دیگری برای این پست در حال انجام است؛ چند لحظه بعد دوباره تلاش کنید.'));
+      }
+
       let targetText = body;
       let targetParseMode: ParseMode = requestedParseMode;
       if (!caps.htmlParseMode) {
@@ -769,6 +773,9 @@ export async function updatePublishedPostText(
       if (!target.providerBotId || !target.providerChatRef) {
         unsupported = 'شناسهٔ دقیق ربات و مقصدِ زمان ارسال در نسخهٔ قدیمی ذخیره نشده است؛ ویرایش امن این پیام ممکن نیست.';
         errorCode = 'EDIT_METADATA_MISSING';
+      } else if (!caps.editMessage || (kind === 'TEXT' && typeof provider.editMessageText !== 'function') || (kind === 'CAPTION' && typeof provider.editMessageCaption !== 'function')) {
+        unsupported = 'ویرایش این نوع پیام با API رسمی پیام‌رسان مقصد در دسترس نیست.';
+        errorCode = 'EDIT_METHOD_UNAVAILABLE';
       } else if (!messageId || !kind) {
         unsupported = 'شناسهٔ پیامِ حامل متن یا کپشن برای این مقصد ثبت نشده است.';
         errorCode = 'EDIT_MESSAGE_ID_MISSING';
@@ -798,10 +805,6 @@ export async function updatePublishedPostText(
             eq(postTargets.state, 'SENT'),
           ));
         continue;
-      }
-
-      if (target.editState === 'PROCESSING' && target.editLockUntil && target.editLockUntil.getTime() > now.getTime()) {
-        throw new AppError(ERR.CONFLICT('ویرایش دیگری برای این پست در حال انجام است؛ چند لحظه بعد دوباره تلاش کنید.'));
       }
 
       const claim = await tx.update(postTargets)
