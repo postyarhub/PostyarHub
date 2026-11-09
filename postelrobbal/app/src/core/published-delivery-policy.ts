@@ -34,3 +34,9 @@ export function shouldUseMediaGroup(
 export function mediaInlineTextLimit(platform: Platform): number {
   return platform === 'bale' ? 4096 : 1024;
 }
+
+/** Maximum editable text length for the stored message kind on each provider. */
+export function publishedMessageTextLimit(platform: Platform, kind: 'TEXT' | 'CAPTION'): number {
+  if (kind === 'CAPTION' && platform !== 'bale') return 1024;
+  return 4096;
+}
