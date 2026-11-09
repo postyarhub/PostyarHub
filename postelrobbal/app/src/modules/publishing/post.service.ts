@@ -11,6 +11,7 @@ import { enqueue } from '../../queue/queues.js';
 import { assertWithinLimit } from '../subscriptions/plan.service.js';
 import { refreshPostAggregate } from '../../core/post-aggregate.js';
 import { createLogger } from '../../core/logger.js';
+import { publishedMessageTextLimit } from '../../core/published-delivery-policy.js';
 import { getProvider } from '../../providers/index.js';
 import type { Platform } from '../../providers/types.js';
 import { decryptSecret } from '../../security/encryption.js';
@@ -780,9 +781,7 @@ export async function updatePublishedPostText(
         kind = kind ?? 'CAPTION';
       }
 
-      const maxMessageTextLength = kind === 'CAPTION'
-        ? (platform === 'bale' ? 4096 : 1024)
-        : 4096;
+      const maxMessageTextLength = kind ? publishedMessageTextLimit(platform, kind) : 4096;
       let unsupported = '';
       let errorCode: string | null = null;
       if (!target.providerBotId || !target.providerChatRef) {
