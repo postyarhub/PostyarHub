@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mediaInlineTextLimit, publishedMessageTextLimit, resolveDeliveryChatRef, shouldUseMediaGroup } from './published-delivery-policy.js';
 
 describe('published delivery policy', () => {
