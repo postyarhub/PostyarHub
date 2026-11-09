@@ -403,7 +403,7 @@ async function deliverPost(targetId: string): Promise<void> {
       // Telegram keeps its documented album behavior. Bale intentionally uses
       // sequential sendPhoto calls so every channel item remains an independent
       // message with its own native share / magazine / story actions.
-      result = await provider.sendMediaGroup(token, {
+      result = await provider.sendMediaGroup!(token, {
         chatRef: providerChatRef,
         text: hasText && fitsMediaCaption ? text : '',
         parseMode,
