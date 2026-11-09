@@ -77,6 +77,25 @@ describe('Bale request encoding and inline keyboard payload', () => {
     })).rejects.toMatchObject({ providerClass: 'VALIDATION' });
     expect(httpJsonMock).not.toHaveBeenCalled();
   });
+  it('sends ordinary photo posts as unprotected individual Bale messages', async () => {
+    const adapter = new BaleAdapter();
+    const result = await adapter.sendMedia('TOKEN', {
+      chatRef: '-100123',
+      text: 'متن پست',
+      mediaBuffer: Buffer.from('jpeg-bytes'),
+      mediaFilename: 'postyar.jpg',
+      mediaMime: 'image/jpeg',
+      kind: 'photo',
+    });
+
+    expect(result).toEqual({ ok: true, messageId: '456' });
+    const [url, fields] = httpMultipartJsonMock.mock.calls[0] as [string, Record<string, string>];
+    expect(url).toBe('https://tapi.bale.ai/botTOKEN/sendPhoto');
+    expect(fields.chat_id).toBe('-100123');
+    expect(fields.caption).toBe('متن پست');
+    expect(fields.protect_content).toBeUndefined();
+  });
+
   it('uses the documented sendMediaGroup endpoint for ordered photo albums', async () => {
     httpMultipartJsonMock.mockResolvedValue({
       status: 200,
