@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mediaInlineTextLimit, publishedMessageTextLimit, shouldUseMediaGroup } from './published-delivery-policy.js';
+import { mediaInlineTextLimit, publishedMessageTextLimit, resolveDeliveryChatRef, shouldUseMediaGroup } from './published-delivery-policy.js';
 
 describe('published delivery policy', () => {
   const supportedAlbum = {
@@ -38,5 +38,20 @@ describe('published delivery policy', () => {
     expect(publishedMessageTextLimit('telegram', 'CAPTION')).toBe(1024);
     expect(publishedMessageTextLimit('bale', 'TEXT')).toBe(4096);
     expect(publishedMessageTextLimit('rubika', 'TEXT')).toBe(4096);
+  });
+
+  it('pins Bale and Telegram username destinations to their resolved chat IDs', async () => {
+    const getChat = vi.fn(async () => ({ id: '-100987654321' }));
+    await expect(resolveDeliveryChatRef('bale', '@postyar', getChat)).resolves.toBe('-100987654321');
+    await expect(resolveDeliveryChatRef('telegram', '@postyar', getChat)).resolves.toBe('-100987654321');
+    expect(getChat).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not re-resolve canonical IDs or delegate Rubika username handling to other providers', async () => {
+    const getChat = vi.fn(async () => ({ id: '-100987654321' }));
+    await expect(resolveDeliveryChatRef('bale', ' -100123 ' , getChat)).resolves.toBe('-100123');
+    await expect(resolveDeliveryChatRef('telegram', '-100456', getChat)).resolves.toBe('-100456');
+    await expect(resolveDeliveryChatRef('rubika', 'rubika-chat-id', getChat)).resolves.toBe('rubika-chat-id');
+    expect(getChat).not.toHaveBeenCalled();
   });
 });
