@@ -40,3 +40,19 @@ export function publishedMessageTextLimit(platform: Platform, kind: 'TEXT' | 'CA
   if (kind === 'CAPTION' && platform !== 'bale') return 1024;
   return 4096;
 }
+
+/** Resolve a mutable public username once so later edits target the exact sent-to chat. */
+export async function resolveDeliveryChatRef(
+  platform: Platform,
+  chatRef: string,
+  getChat: (chatRef: string) => Promise<{ id: string }>,
+): Promise<string> {
+  const normalized = chatRef.trim();
+  if ((platform === 'bale' || platform === 'telegram') && normalized.startsWith('@')) {
+    const resolved = await getChat(normalized);
+    const id = String(resolved.id ?? '').trim();
+    if (!id) throw new Error('Provider returned an empty canonical chat ID.');
+    return id;
+  }
+  return normalized;
+}
