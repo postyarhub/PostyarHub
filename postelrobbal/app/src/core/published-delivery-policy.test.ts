@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mediaInlineTextLimit, shouldUseMediaGroup } from './published-delivery-policy.js';
+import { mediaInlineTextLimit, publishedMessageTextLimit, shouldUseMediaGroup } from './published-delivery-policy.js';
 
 describe('published delivery policy', () => {
   const supportedAlbum = {
@@ -31,5 +31,12 @@ describe('published delivery policy', () => {
     expect(mediaInlineTextLimit('bale')).toBe(4096);
     expect(mediaInlineTextLimit('telegram')).toBe(1024);
     expect(mediaInlineTextLimit('rubika')).toBe(1024);
+  });
+
+  it('applies provider-specific limits when editing existing messages', () => {
+    expect(publishedMessageTextLimit('bale', 'CAPTION')).toBe(4096);
+    expect(publishedMessageTextLimit('telegram', 'CAPTION')).toBe(1024);
+    expect(publishedMessageTextLimit('bale', 'TEXT')).toBe(4096);
+    expect(publishedMessageTextLimit('rubika', 'TEXT')).toBe(4096);
   });
 });
