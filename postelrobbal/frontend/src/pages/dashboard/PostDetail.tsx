@@ -40,6 +40,9 @@ interface TargetViewDto {
   providerMessageId: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  editErrorCode: string | null;
+  editErrorMessage: string | null;
+  editedAt: string | null;
   sentAt: string | null;
   nextRetryAt: string | null;
   platform: string;
@@ -65,6 +68,9 @@ export default function PostDetail() {
   const [mediaItems, setMediaItems] = useState<PostMediaDto[]>([]);
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   const [analytics, setAnalytics] = useState<PostAnalyticsDto | null>(null);
+  const [publishedEditOpen, setPublishedEditOpen] = useState(false);
+  const [publishedEditBody, setPublishedEditBody] = useState('');
+  const [publishedEditing, setPublishedEditing] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!id) return;
@@ -182,6 +188,38 @@ export default function PostDetail() {
     }
   };
 
+  const openPublishedEdit = () => {
+    setPublishedEditBody(post?.body ?? '');
+    setPublishedEditOpen(true);
+  };
+
+  const savePublishedEdit = async () => {
+    if (!id) return;
+    setPublishedEditing(true);
+    try {
+      const result = await api.put<{
+        updatedCount: number;
+        failedCount: number;
+        results: Array<{ success: boolean; channelTitle: string; errorMessage: string | null }>;
+      }>(`/api/v1/posts/${id}/published`, { body: publishedEditBody });
+      if (result.updatedCount > 0 && result.failedCount === 0) {
+        toast.success(`متن پست در ${faDigits(result.updatedCount)} مقصد ویرایش شد.`);
+        setPublishedEditOpen(false);
+      } else if (result.updatedCount > 0) {
+        toast.error(`ویرایش در ${faDigits(result.updatedCount)} مقصد موفق و در ${faDigits(result.failedCount)} مقصد ناموفق بود. جزئیات هر کانال در جدول وضعیت ارسال نمایش داده می‌شود.`);
+        setPublishedEditOpen(false);
+      } else {
+        const firstFailure = result.results.find((item) => !item.success)?.errorMessage;
+        toast.error(firstFailure || 'ویرایش پیام در هیچ‌یک از کانال‌ها انجام نشد.');
+      }
+      await load(true);
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setPublishedEditing(false);
+    }
+  };
+
   const cancelPost = async () => {
     if (!id) return;
     setCancelling(true);
@@ -211,6 +249,7 @@ export default function PostDetail() {
   }
 
   const cancellable = post.state === 'SCHEDULED' || post.state === 'QUEUED';
+  const editablePublished = (post.state === 'PUBLISHED' || post.state === 'PARTIAL') && targets.some((target) => target.state === 'SENT');
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -224,6 +263,9 @@ export default function PostDetail() {
           <Badge tone="brand">{faLabel(post.source, POST_SOURCE_FA)}</Badge>
           {cancellable && (
             <Button variant="ghost" size="sm" onClick={() => setCancelOpen(true)}>لغو پست</Button>
+          )}
+          {editablePublished && (
+            <Button variant="soft" size="sm" onClick={openPublishedEdit}>ویرایش متن منتشرشده</Button>
           )}
         </div>
       </div>
@@ -298,6 +340,12 @@ export default function PostDetail() {
                       {t.errorMessage && (
                         <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 3 }}>دلیل: {t.errorMessage}</div>
                       )}
+                      {t.editErrorMessage && (
+                        <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 3 }}>خطای ویرایش: {t.editErrorMessage}</div>
+                      )}
+                      {t.editedAt && (
+                        <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3 }}>آخرین ویرایش: {faRelative(t.editedAt)}</div>
+                      )}
                     </td>
                     <td><StatusBadge state={t.state} labels={DELIVERY_STATE_FA} /></td>
                     <td>{faDigits(t.attempts)}</td>
@@ -366,6 +414,79 @@ export default function PostDetail() {
           </div>
         )}
       </Card>
+
+      {publishedEditOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1200,
+            display: 'grid',
+            placeItems: 'center',
+            padding: 16,
+            background: 'rgba(15, 23, 42, .58)',
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="published-edit-title"
+            dir="rtl"
+            style={{
+              width: 'min(680px, 100%)',
+              maxHeight: 'min(84vh, 760px)',
+              overflow: 'auto',
+              background: 'var(--surface)',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: 16,
+              padding: 20,
+              boxShadow: '0 24px 80px rgba(0,0,0,.28)',
+              display: 'grid',
+              gap: 14,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <h2 id="published-edit-title" style={{ margin: 0, fontSize: 17, fontWeight: 850 }}>ویرایش متن پست منتشرشده</h2>
+              <Button size="sm" variant="ghost" disabled={publishedEditing} onClick={() => setPublishedEditOpen(false)}>بستن</Button>
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-2)', fontSize: 13, lineHeight: 1.9 }}>
+              متن پیام یا کپشنِ همان پیام در کانال‌های ارسال‌شده ویرایش می‌شود. تصویرها و ویدئوها دوباره ارسال یا جایگزین نمی‌شوند و دکمه‌های فعلی نیز تغییر نمی‌کنند. متن انتهایی اختصاصی هر کانال حفظ می‌شود. پست‌های قدیمی که اطلاعات ربات و مقصدِ زمان ارسالشان ثبت نشده باشد، برای جلوگیری از ویرایش اشتباه ممکن است قابل ویرایش نباشند.
+            </p>
+            <label htmlFor="published-post-edit-body" style={{ display: 'grid', gap: 7, fontSize: 13, fontWeight: 700 }}>
+              متن جدید
+              <textarea
+                id="published-post-edit-body"
+                value={publishedEditBody}
+                onChange={(event) => setPublishedEditBody(event.target.value)}
+                maxLength={4000}
+                rows={10}
+                disabled={publishedEditing}
+                style={{
+                  width: '100%',
+                  minHeight: 220,
+                  resize: 'vertical',
+                  padding: 12,
+                  border: '1px solid var(--border)',
+                  borderRadius: 10,
+                  background: 'var(--surface-2)',
+                  color: 'var(--text)',
+                  font: 'inherit',
+                  lineHeight: 1.9,
+                  boxSizing: 'border-box',
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{faDigits(publishedEditBody.length)} از ۴۰۰۰ نویسه</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button variant="ghost" disabled={publishedEditing} onClick={() => setPublishedEditOpen(false)}>انصراف</Button>
+                <Button loading={publishedEditing} onClick={() => void savePublishedEdit()}>ذخیره و ویرایش در کانال‌ها</Button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
 
       <ConfirmDialog
         open={cancelOpen}

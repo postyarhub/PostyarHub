@@ -158,8 +158,8 @@ export class RubikaAdapter implements ProviderAdapter {
     return { ok: true, messageId };
   }
 
-  async editMessageCaption(token: string, chatRef: string, messageId: string, caption: string): Promise<void> {
-    await call(token, 'editMessageText', { chat_id: chatRef, message_id: messageId, text: caption });
+  async editMessageText(token: string, chatRef: string, messageId: string, text: string): Promise<void> {
+    await call(token, 'editMessageText', { chat_id: chatRef, message_id: messageId, text });
   }
 
   async deleteMessage(token: string, chatRef: string, messageId: string): Promise<void> {

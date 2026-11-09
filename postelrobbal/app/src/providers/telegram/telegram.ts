@@ -204,8 +204,24 @@ export class TelegramAdapter implements ProviderAdapter {
     return { ok: true, messageId: String(firstMessageId) };
   }
 
-  async editMessageCaption(token: string, chatRef: string, messageId: string, caption: string): Promise<void> {
-    await call(token, 'editMessageCaption', { chat_id: chatRef, message_id: Number(messageId), caption });
+  async editMessageText(token: string, chatRef: string, messageId: string, text: string, parseMode: 'NONE' | 'HTML' | 'MARKDOWN' = 'NONE'): Promise<void> {
+    await call(token, 'editMessageText', {
+      chat_id: chatRef,
+      message_id: Number(messageId),
+      text,
+      ...(parseMode === 'HTML' ? { parse_mode: 'HTML' } : {}),
+      ...(parseMode === 'MARKDOWN' ? { parse_mode: 'MarkdownV2' } : {}),
+    });
+  }
+
+  async editMessageCaption(token: string, chatRef: string, messageId: string, caption: string, parseMode: 'NONE' | 'HTML' | 'MARKDOWN' = 'NONE'): Promise<void> {
+    await call(token, 'editMessageCaption', {
+      chat_id: chatRef,
+      message_id: Number(messageId),
+      caption,
+      ...(parseMode === 'HTML' ? { parse_mode: 'HTML' } : {}),
+      ...(parseMode === 'MARKDOWN' ? { parse_mode: 'MarkdownV2' } : {}),
+    });
   }
 
   async deleteMessage(token: string, chatRef: string, messageId: string): Promise<void> {

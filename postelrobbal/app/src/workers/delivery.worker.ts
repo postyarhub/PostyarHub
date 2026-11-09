@@ -12,6 +12,7 @@ import { outboxRow, relayOutbox } from '../core/outbox.js';
 import { emitEvent } from '../core/events.js';
 import { createLogger } from '../core/logger.js';
 import { resolveUniqueDeliveryButtons } from '../core/delivery-buttons.js';
+import { mediaInlineTextLimit, resolveDeliveryChatRef, shouldUseMediaGroup } from '../core/published-delivery-policy.js';
 import { readMediaBuffer, readProviderPhotoJpeg } from '../modules/media/media.service.js';
 import { createWorker } from '../queue/connection.js';
 import { loadEnv } from '../config/env.js';
@@ -273,6 +274,7 @@ async function deliverPost(targetId: string): Promise<void> {
 
     const platform: Platform = channel.platform;
     let token: string;
+    let providerBotId: string;
     try {
       const bot = await loadActiveBotToken(channel);
       if (!bot) {
@@ -283,6 +285,7 @@ async function deliverPost(targetId: string): Promise<void> {
         return;
       }
       token = bot.token;
+      providerBotId = bot.botId;
     } catch {
       await finalizeFailure(target, post, channel, 'UNAUTHORIZED', 'اعتبارنامهٔ ربات نامعتبر است. ربات را دوباره متصل کنید.', false);
       return;
@@ -290,6 +293,12 @@ async function deliverPost(targetId: string): Promise<void> {
 
     const provider = getProvider(platform);
     const caps = provider.capabilities();
+    // Resolve public usernames once and persist the exact destination used by this send.
+    const providerChatRef = await resolveDeliveryChatRef(
+      platform,
+      channel.channelRef,
+      (chatRef) => provider.getChat(token, chatRef),
+    );
 
     const buttons = post.buttonsJson ?? {};
 
@@ -373,20 +382,31 @@ async function deliverPost(targetId: string): Promise<void> {
       }
     }
 
-    let result;
+    let result: Awaited<ReturnType<typeof provider.sendText>>;
+    let providerTextMessageId: string | null = null;
+    let providerTextKind: 'TEXT' | 'CAPTION' | null = null;
+    const hasText = text.length > 0;
+    const fitsMediaCaption = text.length <= mediaInlineTextLimit(platform);
+    const mediaCaptionKind: 'TEXT' | 'CAPTION' = platform === 'rubika' ? 'TEXT' : 'CAPTION';
+
     if (mediaPayloads.length === 0) {
-      result = await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons });
-    } else if (
-      mediaPayloads.length >= 2 &&
-      mediaPayloads.every((item) => item.kind === 'photo') &&
-      inlineButtons.length === 0 &&
-      typeof provider.sendMediaGroup === 'function'
-    ) {
-      // Telegram and Bale expose documented media-album endpoints. Keep long
-      // text in a separate text message because album captions are limited to 1024 chars.
-      result = await provider.sendMediaGroup(token, {
-        chatRef: channel.channelRef,
-        text: text.length <= 1024 ? text : '',
+      result = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons });
+      if (hasText) {
+        providerTextMessageId = result.messageId;
+        providerTextKind = 'TEXT';
+      }
+    } else if (shouldUseMediaGroup(platform, {
+      providerSupportsMediaGroup: typeof provider.sendMediaGroup === 'function',
+      mediaCount: mediaPayloads.length,
+      allPhotos: mediaPayloads.every((item) => item.kind === 'photo'),
+      hasInlineButtons: inlineButtons.length > 0,
+    })) {
+      // Telegram keeps its documented album behavior. Bale intentionally uses
+      // sequential sendPhoto calls so every channel item remains an independent
+      // message with its own native share / magazine / story actions.
+      result = await provider.sendMediaGroup!(token, {
+        chatRef: providerChatRef,
+        text: hasText && fitsMediaCaption ? text : '',
         parseMode,
         media: mediaPayloads.map((item) => ({
           buffer: item.buffer,
@@ -394,40 +414,46 @@ async function deliverPost(targetId: string): Promise<void> {
           mime: item.mime,
         })),
       });
-      if (text.length > 1024) {
-        try {
-          await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons: [] });
-        } catch (err) {
-          // Do not auto-retry and duplicate an album already accepted by the provider.
-          throw makeProviderError('UNKNOWN', 'تصاویر ارسال شدند، اما ارسال متن بلند کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
-        }
+      if (hasText && fitsMediaCaption) {
+        providerTextMessageId = result.messageId;
+        providerTextKind = 'CAPTION';
+      } else if (hasText) {
+        const textResult = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons: [] });
+        providerTextMessageId = textResult.messageId;
+        providerTextKind = 'TEXT';
       }
     } else if (mediaPayloads.length === 1) {
       const item = mediaPayloads[0]!;
       result = await provider.sendMedia(token, {
-        chatRef: channel.channelRef,
-        text,
-        parseMode,
-        inlineButtons,
+        chatRef: providerChatRef,
+        text: hasText && fitsMediaCaption ? text : '',
+        parseMode: hasText && fitsMediaCaption ? parseMode : 'NONE',
+        inlineButtons: hasText && fitsMediaCaption ? inlineButtons : [],
         mediaBuffer: item.buffer,
         mediaFilename: item.filename,
         mediaMime: item.mime,
         kind: item.kind,
       });
+      if (hasText && fitsMediaCaption) {
+        providerTextMessageId = result.messageId;
+        providerTextKind = mediaCaptionKind;
+      } else if (hasText) {
+        const textResult = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons });
+        providerTextMessageId = textResult.messageId;
+        providerTextKind = 'TEXT';
+      }
     } else {
-      // Rubika uses the documented single-file upload/send path; and both
-      // Telegram and Bale album methods cannot carry these inline buttons.
-      // Send each image through the current single-file method, attaching the
-      // caption/buttons only to the first image.
+      // Rubika uses sequential sends because its public Bot API does not document albums.
+      // Bale uses this path for every multi-photo post so each image remains an independent channel message.
       let firstResult: Awaited<ReturnType<typeof provider.sendMedia>> | null = null;
       for (let index = 0; index < mediaPayloads.length; index += 1) {
         const item = mediaPayloads[index]!;
         try {
           const sent = await provider.sendMedia(token, {
-            chatRef: channel.channelRef,
-            text: index === 0 && text.length <= 1024 ? text : '',
-            parseMode: index === 0 && text.length <= 1024 ? parseMode : 'NONE',
-            inlineButtons: index === 0 ? inlineButtons : [],
+            chatRef: providerChatRef,
+            text: index === 0 && hasText && fitsMediaCaption ? text : '',
+            parseMode: index === 0 && hasText && fitsMediaCaption ? parseMode : 'NONE',
+            inlineButtons: index === 0 && hasText && fitsMediaCaption ? inlineButtons : [],
             mediaBuffer: item.buffer,
             mediaFilename: item.filename,
             mediaMime: item.mime,
@@ -436,23 +462,33 @@ async function deliverPost(targetId: string): Promise<void> {
           if (index === 0) firstResult = sent;
         } catch (err) {
           if (index === 0) throw err;
-          // Some earlier items have already been sent. Failing non-retryably
-          // prevents the worker from blindly re-sending duplicate media.
           throw makeProviderError('UNKNOWN', 'بخشی از تصاویر ارسال شد، اما ارسال همهٔ تصاویر کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
         }
       }
-      if (text.length > 1024) {
+      if (hasText && fitsMediaCaption && firstResult) {
+        providerTextMessageId = firstResult.messageId;
+        providerTextKind = mediaCaptionKind;
+      } else if (hasText) {
         try {
-          await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons: [] });
+          const textResult = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons });
+          providerTextMessageId = textResult.messageId;
+          providerTextKind = 'TEXT';
         } catch (err) {
-          throw makeProviderError('UNKNOWN', 'تصاویر ارسال شدند، اما ارسال متن بلند کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
+          throw makeProviderError('UNKNOWN', 'تصاویر ارسال شدند، اما ارسال متن کامل نشد؛ وضعیت کانال را بررسی کنید.', err);
         }
       }
       if (!firstResult) throw makeProviderError('UNKNOWN', 'پلتفرم شناسهٔ پیام معتبر برنگرداند.');
       result = firstResult;
     }
 
-    await finalizeSuccess(target, post, channel, platform, result.messageId);
+    await finalizeSuccess(target, post, channel, platform, result.messageId, undefined, {
+      providerBotId,
+      providerChatRef,
+      providerTextMessageId,
+      providerTextKind,
+      providerText: hasText ? text : null,
+      providerParseMode: parseMode,
+    });
   } catch (err) {
     const errorClass = errorClassOf(err);
     const message = errorMessageOf(err);
@@ -519,6 +555,14 @@ async function finalizeSuccess(
   platform: Platform,
   messageId: string,
   wordpressMeta?: WordPressSuccessMeta,
+  deliveryMeta?: {
+    providerBotId: string;
+    providerChatRef: string;
+    providerTextMessageId: string | null;
+    providerTextKind: 'TEXT' | 'CAPTION' | null;
+    providerText: string | null;
+    providerParseMode: 'NONE' | 'HTML' | 'MARKDOWN';
+  },
 ): Promise<boolean> {
   const now = new Date();
   const db = getDb();
@@ -529,6 +573,14 @@ async function finalizeSuccess(
       .set({
         state: 'SENT',
         providerMessageId: messageId.slice(0, 190),
+        ...(deliveryMeta ? {
+          providerBotId: deliveryMeta.providerBotId,
+          providerChatRef: deliveryMeta.providerChatRef,
+          providerTextMessageId: deliveryMeta.providerTextMessageId,
+          providerTextKind: deliveryMeta.providerTextKind,
+          providerText: deliveryMeta.providerText,
+          providerParseMode: deliveryMeta.providerParseMode,
+        } : {}),
         sentAt: now,
         attempts: target.attempts + 1,
         errorCode: null,

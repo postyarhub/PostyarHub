@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, like, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, like, lt, or, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { bots, channels, media, outboxEvents, postTargets, posts, users } from '../../db/schema.js';
 import type { PostButtons } from '../../db/schema.js';
@@ -11,6 +11,10 @@ import { enqueue } from '../../queue/queues.js';
 import { assertWithinLimit } from '../subscriptions/plan.service.js';
 import { refreshPostAggregate } from '../../core/post-aggregate.js';
 import { createLogger } from '../../core/logger.js';
+import { publishedMessageTextLimit } from '../../core/published-delivery-policy.js';
+import { getProvider } from '../../providers/index.js';
+import type { Platform } from '../../providers/types.js';
+import { decryptSecret } from '../../security/encryption.js';
 
 /**
  * Publishing domain (§22, §25): DRAFT → (SCHEDULED →) QUEUED → PUBLISHING →
@@ -68,6 +72,9 @@ export interface TargetView {
   providerMessageId: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  editErrorCode: string | null;
+  editErrorMessage: string | null;
+  editedAt: Date | null;
   sentAt: Date | null;
   nextRetryAt: Date | null;
   platform: 'telegram' | 'bale' | 'rubika';
@@ -565,6 +572,447 @@ export async function updateScheduledPost(
   return requireOwnedPost(tenantId, postId);
 }
 
+
+export interface UpdatePublishedPostTextInput {
+  body: string;
+  parseMode?: ParseMode;
+}
+
+export interface PublishedEditTargetResult {
+  targetId: string;
+  channelId: string;
+  channelTitle: string;
+  platform: Platform;
+  success: boolean;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+function stripPublishedHtml(input: string): string {
+  return input
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h\d)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function stripPublishedMarkdown(input: string): string {
+  return input
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/\u0060{1,3}([^\u0060]*)\u0060{1,3}/g, '$1')
+    .replace(/^\s*[-*_]{3,}\s*$/gm, '')
+    .trim();
+}
+
+function escapePublishedFooter(input: string, parseMode: ParseMode): string {
+  if (parseMode === 'HTML') {
+    return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  if (parseMode === 'MARKDOWN') {
+    const special = new Set(['_', '*', '[', ']', '(', ')', '~', String.fromCharCode(96), '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '\\']);
+    return Array.from(input, (char) => special.has(char) ? '\\' + char : char).join('');
+  }
+  return input;
+}
+
+function safePublishedEditError(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<object>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error && current.message) messages.push(current.message);
+    else if ('message' in current && typeof (current as { message?: unknown }).message === 'string') {
+      messages.push((current as { message: string }).message);
+    }
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  if (/message is not modified/i.test(messages.join(' '))) return '';
+  if (error && typeof error === 'object' && 'userMessageFa' in error) {
+    const message = (error as { userMessageFa?: unknown }).userMessageFa;
+    if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 255);
+  }
+  return 'ویرایش در پیام‌رسان مقصد انجام نشد؛ اتصال و دسترسی ربات را بررسی کنید.';
+}
+
+/**
+ * Edit only the existing text/caption of messages already delivered by Postyar.
+ * This deliberately does not resend media or modify inline keyboards. Exact
+ * sender/chat identifiers are required; legacy targets without them are not
+ * guessed from the channel's current bot connection.
+ */
+export async function updatePublishedPostText(
+  tenantId: string,
+  postId: string,
+  input: UpdatePublishedPostTextInput,
+  meta: ActorMeta = {},
+): Promise<{
+  post: typeof posts.$inferSelect;
+  results: PublishedEditTargetResult[];
+  updatedCount: number;
+  failedCount: number;
+}> {
+  const db = getDb();
+  const body = input.body.trim();
+  const now = new Date();
+  if (body.length > MAX_POST_BODY_LENGTH) {
+    throw new AppError(ERR.VALIDATION('متن جدید حداکثر ۴۰۰۰ نویسه است.'));
+  }
+
+  type PreparedEdit = {
+    targetId: string;
+    channelId: string;
+    channelTitle: string;
+    platform: Platform;
+    botId: string;
+    chatRef: string;
+    messageId: string;
+    kind: 'TEXT' | 'CAPTION';
+    text: string;
+    parseMode: ParseMode;
+    lockToken: string;
+  };
+
+  const prepared: PreparedEdit[] = [];
+  const results: PublishedEditTargetResult[] = [];
+  let currentPost: typeof posts.$inferSelect | null = null;
+  const lockUntil = new Date(now.getTime() + 10 * 60 * 1000);
+
+  await db.transaction(async (tx) => {
+    const [post] = await tx
+      .select()
+      .from(posts)
+      .where(and(eq(posts.id, postId), eq(posts.tenantId, tenantId)))
+      .limit(1)
+      .for('update');
+    if (!post) throw new AppError(ERR.NOT_FOUND('پست'));
+    currentPost = post;
+
+    if (post.state !== 'PUBLISHED' && post.state !== 'PARTIAL') {
+      throw new AppError(ERR.CONFLICT('ویرایش پس از انتشار فقط برای پست منتشرشده یا دارای ارسال موفق امکان‌پذیر است.'));
+    }
+
+    const hasMedia = (Array.isArray(post.mediaIds) && post.mediaIds.length > 0) || Boolean(post.mediaId);
+    assertFooterLengths(body, post.buttonsJson);
+    if (!body && !hasMedia) {
+      throw new AppError(ERR.VALIDATION('متن پست نمی‌تواند خالی باشد؛ مگر اینکه رسانه‌ای به پست پیوست شده باشد.'));
+    }
+
+    const targets = await tx
+      .select({
+        targetId: postTargets.id,
+        state: postTargets.state,
+        channelId: channels.id,
+        channelTitle: channels.title,
+        platform: channels.platform,
+        providerMessageId: postTargets.providerMessageId,
+        providerBotId: postTargets.providerBotId,
+        providerChatRef: postTargets.providerChatRef,
+        providerTextMessageId: postTargets.providerTextMessageId,
+        providerTextKind: postTargets.providerTextKind,
+        editState: postTargets.editState,
+        editLockUntil: postTargets.editLockUntil,
+      })
+      .from(postTargets)
+      .innerJoin(channels, eq(channels.id, postTargets.channelId))
+      .where(and(
+        eq(postTargets.postId, postId),
+        eq(postTargets.tenantId, tenantId),
+        eq(channels.tenantId, tenantId),
+      ))
+      .orderBy(postTargets.createdAt)
+      .for('update');
+
+    const sentTargets = targets.filter((target) => target.state === 'SENT');
+    if (sentTargets.length === 0) {
+      throw new AppError(ERR.CONFLICT('هیچ مقصدی با وضعیت ارسال موفق برای ویرایش وجود ندارد.'));
+    }
+
+    const requestedParseMode = input.parseMode ?? post.parseMode;
+    for (const target of sentTargets) {
+      const platform = target.platform as Platform;
+      const provider = getProvider(platform);
+      const caps = provider.capabilities();
+
+      if (target.editState === 'PROCESSING' && target.editLockUntil && target.editLockUntil.getTime() > now.getTime()) {
+        throw new AppError(ERR.CONFLICT('ویرایش دیگری برای این پست در حال انجام است؛ چند لحظه بعد دوباره تلاش کنید.'));
+      }
+
+      let targetText = body;
+      let targetParseMode: ParseMode = requestedParseMode;
+      if (!caps.htmlParseMode) {
+        if (targetParseMode === 'HTML') {
+          targetText = stripPublishedHtml(targetText);
+          targetParseMode = 'NONE';
+        } else if (targetParseMode === 'MARKDOWN') {
+          targetText = stripPublishedMarkdown(targetText);
+          targetParseMode = 'NONE';
+        }
+      }
+
+      const footerValue = post.buttonsJson?.footerByChannel?.[target.channelId];
+      const footer = typeof footerValue === 'string' ? footerValue.trim() : '';
+      if (footer) {
+        const safeFooter = escapePublishedFooter(footer, targetParseMode);
+        const baseText = targetText.trimEnd();
+        targetText = baseText
+          ? baseText + (targetParseMode === 'HTML' ? '<br><br>' : '\n\n') + safeFooter
+          : safeFooter;
+      }
+
+      let messageId = target.providerTextMessageId;
+      let kind = target.providerTextKind as 'TEXT' | 'CAPTION' | null;
+
+      // Text-only fallback is safe only when exact sender/chat identity exists.
+      // Telegram and Bale additionally document editing the first album caption.
+      if (!messageId && !hasMedia && target.providerMessageId) {
+        messageId = target.providerMessageId;
+        kind = kind ?? 'TEXT';
+      } else if (!messageId && hasMedia && target.providerMessageId && (platform === 'telegram' || platform === 'bale')) {
+        messageId = target.providerMessageId;
+        kind = kind ?? 'CAPTION';
+      }
+
+      const maxMessageTextLength = kind ? publishedMessageTextLimit(platform, kind) : 4096;
+      let unsupported = '';
+      let errorCode: string | null = null;
+      if (!target.providerBotId || !target.providerChatRef) {
+        unsupported = 'شناسهٔ دقیق ربات و مقصدِ زمان ارسال در نسخهٔ قدیمی ذخیره نشده است؛ ویرایش امن این پیام ممکن نیست.';
+        errorCode = 'EDIT_METADATA_MISSING';
+      } else if (!caps.editMessage || (kind === 'TEXT' && typeof provider.editMessageText !== 'function') || (kind === 'CAPTION' && typeof provider.editMessageCaption !== 'function')) {
+        unsupported = 'ویرایش این نوع پیام با API رسمی پیام‌رسان مقصد در دسترس نیست.';
+        errorCode = 'EDIT_METHOD_UNAVAILABLE';
+      } else if (!messageId || !kind) {
+        unsupported = 'شناسهٔ پیامِ حامل متن یا کپشن برای این مقصد ثبت نشده است.';
+        errorCode = 'EDIT_MESSAGE_ID_MISSING';
+      } else if (targetText.length > maxMessageTextLength) {
+        unsupported = kind === 'CAPTION'
+          ? `متن جدید برای کپشن این پیام بیش از ${maxMessageTextLength} نویسه است؛ این پیام باید با متن کوتاه‌تری ویرایش شود.`
+          : 'متن جدید از محدودیت پیام‌رسان مقصد بیشتر است.';
+        errorCode = kind === 'CAPTION' ? 'EDIT_CAPTION_TOO_LONG' : 'EDIT_TEXT_TOO_LONG';
+      }
+
+      if (unsupported) {
+        results.push({
+          targetId: target.targetId,
+          channelId: target.channelId,
+          channelTitle: target.channelTitle,
+          platform,
+          success: false,
+          errorCode,
+          errorMessage: unsupported,
+        });
+        await tx.update(postTargets)
+          .set({ editErrorCode: errorCode, editErrorMessage: unsupported })
+          .where(and(
+            eq(postTargets.id, target.targetId),
+            eq(postTargets.tenantId, tenantId),
+            eq(postTargets.state, 'SENT'),
+          ));
+        continue;
+      }
+
+      const lockToken = newId();
+      const claim = await tx.update(postTargets)
+        .set({ editState: 'PROCESSING', editLockUntil: lockUntil, editLockToken: lockToken, editErrorCode: null, editErrorMessage: null })
+        .where(and(
+          eq(postTargets.id, target.targetId),
+          eq(postTargets.tenantId, tenantId),
+          eq(postTargets.state, 'SENT'),
+          or(eq(postTargets.editState, 'IDLE'), lt(postTargets.editLockUntil, now), and(eq(postTargets.editState, 'PROCESSING'), isNull(postTargets.editLockUntil))),
+        ));
+      if (affectedRowsOf(claim) === 0) {
+        throw new AppError(ERR.CONFLICT('وضعیت ویرایش یکی از مقصدها همزمان تغییر کرده است؛ صفحه را تازه کنید.'));
+      }
+
+      prepared.push({
+        targetId: target.targetId,
+        channelId: target.channelId,
+        channelTitle: target.channelTitle,
+        platform,
+        botId: target.providerBotId!,
+        chatRef: target.providerChatRef!,
+        messageId: messageId!,
+        kind: kind!,
+        text: targetText,
+        parseMode: targetParseMode,
+        lockToken,
+      });
+    }
+  });
+
+  let updatedCount = 0;
+  for (const item of prepared) {
+    try {
+      const [bot] = await db
+        .select({ tokenEncrypted: bots.tokenEncrypted, status: bots.status, platform: bots.platform })
+        .from(bots)
+        .where(and(
+          eq(bots.id, item.botId),
+          eq(bots.tenantId, tenantId),
+          eq(bots.platform, item.platform),
+        ))
+        .limit(1);
+
+      if (!bot || bot.status !== 'ACTIVE') {
+        throw new Error('ربات ارسال‌کننده دیگر فعال یا در دسترس نیست.');
+      }
+
+      const provider = getProvider(item.platform);
+      const token = decryptSecret(bot.tokenEncrypted);
+      if (item.kind === 'CAPTION') {
+        if (typeof provider.editMessageCaption !== 'function') {
+          throw new Error('این پیام‌رسان ویرایش کپشن را پشتیبانی نمی‌کند.');
+        }
+        await provider.editMessageCaption(token, item.chatRef, item.messageId, item.text, item.parseMode);
+      } else {
+        if (typeof provider.editMessageText !== 'function') {
+          throw new Error('این پیام‌رسان ویرایش متن را پشتیبانی نمی‌کند.');
+        }
+        await provider.editMessageText(token, item.chatRef, item.messageId, item.text, item.parseMode);
+      }
+
+      const updated = await db.update(postTargets)
+        .set({
+          editState: 'IDLE',
+          editLockUntil: null,
+          editLockToken: null,
+          providerTextMessageId: item.messageId,
+          providerTextKind: item.kind,
+          providerText: item.text,
+          providerParseMode: item.parseMode,
+          editedAt: new Date(),
+          editErrorCode: null,
+          editErrorMessage: null,
+        })
+        .where(and(
+          eq(postTargets.id, item.targetId),
+          eq(postTargets.tenantId, tenantId),
+          eq(postTargets.editState, 'PROCESSING'),
+          eq(postTargets.editLockToken, item.lockToken),
+        ));
+      if (affectedRowsOf(updated) === 0) {
+        throw new Error('قفل ویرایش این مقصد در حین درخواست به عملیات دیگری واگذار شده است.');
+      }
+
+      updatedCount += 1;
+      results.push({
+        targetId: item.targetId,
+        channelId: item.channelId,
+        channelTitle: item.channelTitle,
+        platform: item.platform,
+        success: true,
+        errorCode: null,
+        errorMessage: null,
+      });
+    } catch (error) {
+      const safeMessage = safePublishedEditError(error);
+      if (!safeMessage) {
+        const released = await db.update(postTargets)
+          .set({
+            editState: 'IDLE',
+            editLockUntil: null,
+            editLockToken: null,
+            providerTextMessageId: item.messageId,
+            providerTextKind: item.kind,
+            providerText: item.text,
+            providerParseMode: item.parseMode,
+            editedAt: new Date(),
+            editErrorCode: null,
+            editErrorMessage: null,
+          })
+          .where(and(
+            eq(postTargets.id, item.targetId),
+            eq(postTargets.tenantId, tenantId),
+            eq(postTargets.editState, 'PROCESSING'),
+            eq(postTargets.editLockToken, item.lockToken),
+          ));
+        if (affectedRowsOf(released) === 0) {
+          results.push({
+            targetId: item.targetId,
+            channelId: item.channelId,
+            channelTitle: item.channelTitle,
+            platform: item.platform,
+            success: false,
+            errorCode: 'EDIT_LOCK_LOST',
+            errorMessage: 'قفل ویرایش این مقصد در حین درخواست به عملیات دیگری واگذار شده است.',
+          });
+          continue;
+        }
+        updatedCount += 1;
+        results.push({
+          targetId: item.targetId,
+          channelId: item.channelId,
+          channelTitle: item.channelTitle,
+          platform: item.platform,
+          success: true,
+          errorCode: null,
+          errorMessage: null,
+        });
+        continue;
+      }
+
+      await db.update(postTargets)
+        .set({
+          editState: 'IDLE',
+          editLockUntil: null,
+          editLockToken: null,
+          editErrorCode: 'PROVIDER_EDIT_FAILED',
+          editErrorMessage: safeMessage,
+        })
+        .where(and(
+          eq(postTargets.id, item.targetId),
+          eq(postTargets.tenantId, tenantId),
+          eq(postTargets.editState, 'PROCESSING'),
+          eq(postTargets.editLockToken, item.lockToken),
+        ));
+
+      results.push({
+        targetId: item.targetId,
+        channelId: item.channelId,
+        channelTitle: item.channelTitle,
+        platform: item.platform,
+        success: false,
+        errorCode: 'PROVIDER_EDIT_FAILED',
+        errorMessage: safeMessage,
+      });
+    }
+  }
+
+  if (updatedCount > 0) {
+    const parseMode = input.parseMode ?? currentPost!.parseMode;
+    await db.update(posts)
+      .set({ body, parseMode })
+      .where(and(
+        eq(posts.id, postId),
+        eq(posts.tenantId, tenantId),
+        inArray(posts.state, ['PUBLISHED', 'PARTIAL']),
+      ));
+  }
+
+  const failedCount = results.filter((result) => !result.success).length;
+  await audit({
+    action: 'post.published.edit',
+    actorId: meta.actorId ?? null,
+    actorRole: meta.actorRole ?? null,
+    subjectType: 'post',
+    subjectId: postId,
+    ip: meta.ip ?? undefined,
+    meta: { updated: updatedCount, failed: failedCount, destinations: results.length },
+  });
+
+  const updatedPost = await requireOwnedPost(tenantId, postId);
+  return { post: updatedPost, results, updatedCount, failedCount };
+}
+
 export interface PostListResult {
   items: Array<typeof posts.$inferSelect & { targetSummary: Array<{ state: string; count: number }>; channelSummary: Array<{ platform: string; count: number; sentCount: number; failedCount: number }>; channelDetails: Array<{ channelId: string; title: string; platform: string; state: string }>; latestSentAt: Date | null }>;
   total: number;
@@ -686,6 +1134,9 @@ export async function getPost(
       providerMessageId: postTargets.providerMessageId,
       errorCode: postTargets.errorCode,
       errorMessage: postTargets.errorMessage,
+      editErrorCode: postTargets.editErrorCode,
+      editErrorMessage: postTargets.editErrorMessage,
+      editedAt: postTargets.editedAt,
       sentAt: postTargets.sentAt,
       nextRetryAt: postTargets.nextRetryAt,
       platform: channels.platform,

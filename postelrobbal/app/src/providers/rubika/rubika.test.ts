@@ -64,3 +64,22 @@ describe('Rubika media button payload', () => {
     ]);
   });
 });
+
+describe('Rubika published message editing', () => {
+  it('edits an existing bot-authored message using editMessageText', async () => {
+    httpJsonMock.mockReset();
+    httpJsonMock.mockResolvedValue({ status: 200, data: { ok: true, result: true } });
+    const adapter = new RubikaAdapter();
+    await adapter.editMessageText('TOKEN', 'chat-xyz-123', 'msg-77', 'updated text');
+    const [url, options] = httpJsonMock.mock.calls[0] as [string, { body?: string }];
+    expect(url).toBe('https://botapi.rubika.ir/v3/TOKEN/editMessageText');
+    expect(JSON.parse(options.body ?? '')).toEqual({
+      chat_id: 'chat-xyz-123', message_id: 'msg-77', text: 'updated text',
+    });
+  });
+
+  it('does not expose a separate caption edit method that Rubika does not document', () => {
+    const adapter = new RubikaAdapter();
+    expect('editMessageCaption' in adapter).toBe(false);
+  });
+});

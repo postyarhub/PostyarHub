@@ -4,7 +4,7 @@ import { AppError, ERR } from '../../core/errors.js';
 import { parseWith } from '../../core/validation.js';
 import { normalizeButtonTargetValue } from '../../core/button-target.js';
 import {
-  createPost, publishNow, schedulePost, updateScheduledPost, listPosts, getPost, cancelPost, retryTarget,
+  createPost, publishNow, schedulePost, updateScheduledPost, updatePublishedPostText, listPosts, getPost, cancelPost, retryTarget,
   ActorMeta, PostState,
 } from './post.service.js';
 
@@ -113,6 +113,11 @@ const updateScheduledPostSchema = z.object({
   scheduledAt: z.coerce.date(),
 });
 
+const updatePublishedPostTextSchema = z.object({
+  body: z.string().max(4000),
+  parseMode: z.enum(['NONE', 'HTML', 'MARKDOWN']).optional(),
+});
+
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -172,6 +177,14 @@ export async function registerPostRoutes(app: FastifyInstance): Promise<void> {
     const input = parse(updateScheduledPostSchema, req.body);
     const post = await updateScheduledPost(tenantId, id, input, meta);
     return { success: true, data: { post } };
+  });
+
+  app.put('/posts/:id/published', { preHandler: [app.requireAuth] }, async (req) => {
+    const { tenantId, ...meta } = actor(req);
+    const { id } = req.params as { id: string };
+    const input = parse(updatePublishedPostTextSchema, req.body);
+    const result = await updatePublishedPostText(tenantId, id, input, meta);
+    return { success: true, data: result };
   });
 
   app.get('/posts', { preHandler: [app.requireAuth] }, async (req) => {

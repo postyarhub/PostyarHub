@@ -390,9 +390,23 @@ export const postTargets = mysqlTable('post_targets', {
   attempts: int('attempts').notNull().default(0),
   nextRetryAt: datetime('next_retry_at'),
   providerMessageId: varchar('provider_message_id', { length: 190 }),
+  /** Exact sender and destination used at delivery time; needed for safe later edits. */
+  providerBotId: char('provider_bot_id', { length: 26 }),
+  providerChatRef: varchar('provider_chat_ref', { length: 190 }),
+  /** Message carrying the editable text; may differ from providerMessageId for long media captions. */
+  providerTextMessageId: varchar('provider_text_message_id', { length: 190 }),
+  providerTextKind: mysqlEnum('provider_text_kind', ['TEXT', 'CAPTION']),
+  providerText: text('provider_text'),
+  providerParseMode: mysqlEnum('provider_parse_mode', ['NONE', 'HTML', 'MARKDOWN']).notNull().default('NONE'),
   errorCode: varchar('error_code', { length: 80 }),
   errorMessage: varchar('error_message', { length: 255 }),
   sentAt: datetime('sent_at'),
+  editedAt: datetime('edited_at'),
+  editState: mysqlEnum('edit_state', ['IDLE', 'PROCESSING']).notNull().default('IDLE'),
+  editLockUntil: datetime('edit_lock_until'),
+  editLockToken: char('edit_lock_token', { length: 26 }),
+  editErrorCode: varchar('edit_error_code', { length: 80 }),
+  editErrorMessage: varchar('edit_error_message', { length: 255 }),
   createdAt: ts(),
   updatedAt: datetime('updated_at').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 }, (t) => [
