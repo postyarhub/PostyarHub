@@ -780,6 +780,9 @@ export async function updatePublishedPostText(
         kind = kind ?? 'CAPTION';
       }
 
+      const maxMessageTextLength = kind === 'CAPTION'
+        ? (platform === 'bale' ? 4096 : 1024)
+        : 4096;
       let unsupported = '';
       let errorCode: string | null = null;
       if (!target.providerBotId || !target.providerChatRef) {
@@ -791,13 +794,11 @@ export async function updatePublishedPostText(
       } else if (!messageId || !kind) {
         unsupported = 'شناسهٔ پیامِ حامل متن یا کپشن برای این مقصد ثبت نشده است.';
         errorCode = 'EDIT_MESSAGE_ID_MISSING';
-      } else if (kind === 'CAPTION' && targetText.length > (platform === 'bale' ? 4096 : 1024)) {
-        const captionLimit = platform === 'bale' ? 4096 : 1024;
-        unsupported = `متن جدید برای کپشن این پیام بیش از ${captionLimit} نویسه است؛ این پیام باید با متن کوتاه‌تری ویرایش شود.`;
-        errorCode = 'EDIT_CAPTION_TOO_LONG';
-      } else if (targetText.length > (kind === 'CAPTION' ? 1024 : 4096)) {
-        unsupported = 'متن جدید از محدودیت پیام‌رسان مقصد بیشتر است.';
-        errorCode = 'EDIT_TEXT_TOO_LONG';
+      } else if (targetText.length > maxMessageTextLength) {
+        unsupported = kind === 'CAPTION'
+          ? `متن جدید برای کپشن این پیام بیش از ${maxMessageTextLength} نویسه است؛ این پیام باید با متن کوتاه‌تری ویرایش شود.`
+          : 'متن جدید از محدودیت پیام‌رسان مقصد بیشتر است.';
+        errorCode = kind === 'CAPTION' ? 'EDIT_CAPTION_TOO_LONG' : 'EDIT_TEXT_TOO_LONG';
       }
 
       if (unsupported) {
