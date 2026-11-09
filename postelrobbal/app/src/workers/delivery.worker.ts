@@ -12,7 +12,7 @@ import { outboxRow, relayOutbox } from '../core/outbox.js';
 import { emitEvent } from '../core/events.js';
 import { createLogger } from '../core/logger.js';
 import { resolveUniqueDeliveryButtons } from '../core/delivery-buttons.js';
-import { mediaInlineTextLimit, shouldUseMediaGroup } from '../core/published-delivery-policy.js';
+import { mediaInlineTextLimit, resolveDeliveryChatRef, shouldUseMediaGroup } from '../core/published-delivery-policy.js';
 import { readMediaBuffer, readProviderPhotoJpeg } from '../modules/media/media.service.js';
 import { createWorker } from '../queue/connection.js';
 import { loadEnv } from '../config/env.js';
@@ -294,10 +294,11 @@ async function deliverPost(targetId: string): Promise<void> {
     const provider = getProvider(platform);
     const caps = provider.capabilities();
     // Resolve public usernames once and persist the exact destination used by this send.
-    let providerChatRef = channel.channelRef.trim();
-    if ((platform === 'bale' || platform === 'telegram') && providerChatRef.startsWith('@')) {
-      providerChatRef = (await provider.getChat(token, providerChatRef)).id;
-    }
+    const providerChatRef = await resolveDeliveryChatRef(
+      platform,
+      channel.channelRef,
+      (chatRef) => provider.getChat(token, chatRef),
+    );
 
     const buttons = post.buttonsJson ?? {};
 
