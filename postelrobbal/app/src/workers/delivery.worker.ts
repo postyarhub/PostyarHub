@@ -443,8 +443,8 @@ async function deliverPost(targetId: string): Promise<void> {
         providerTextKind = 'TEXT';
       }
     } else {
-      // Rubika's public Bot API does not document media albums; Telegram/Bale
-      // arrive here when inline buttons require sequential photo sends.
+      // Rubika uses sequential sends because its public Bot API does not document albums.
+      // Bale uses this path for every multi-photo post so each image remains an independent channel message.
       let firstResult: Awaited<ReturnType<typeof provider.sendMedia>> | null = null;
       for (let index = 0; index < mediaPayloads.length; index += 1) {
         const item = mediaPayloads[index]!;
