@@ -12,6 +12,7 @@ import { outboxRow, relayOutbox } from '../core/outbox.js';
 import { emitEvent } from '../core/events.js';
 import { createLogger } from '../core/logger.js';
 import { resolveUniqueDeliveryButtons } from '../core/delivery-buttons.js';
+import { mediaInlineTextLimit, shouldUseMediaGroup } from '../core/published-delivery-policy.js';
 import { readMediaBuffer, readProviderPhotoJpeg } from '../modules/media/media.service.js';
 import { createWorker } from '../queue/connection.js';
 import { loadEnv } from '../config/env.js';
@@ -292,6 +293,11 @@ async function deliverPost(targetId: string): Promise<void> {
 
     const provider = getProvider(platform);
     const caps = provider.capabilities();
+    // Resolve public usernames once and persist the exact destination used by this send.
+    let providerChatRef = channel.channelRef.trim();
+    if ((platform === 'bale' || platform === 'telegram') && providerChatRef.startsWith('@')) {
+      providerChatRef = (await provider.getChat(token, providerChatRef)).id;
+    }
 
     const buttons = post.buttonsJson ?? {};
 
@@ -379,25 +385,26 @@ async function deliverPost(targetId: string): Promise<void> {
     let providerTextMessageId: string | null = null;
     let providerTextKind: 'TEXT' | 'CAPTION' | null = null;
     const hasText = text.length > 0;
-    const fitsMediaCaption = text.length <= 1024;
+    const fitsMediaCaption = text.length <= mediaInlineTextLimit(platform);
     const mediaCaptionKind: 'TEXT' | 'CAPTION' = platform === 'rubika' ? 'TEXT' : 'CAPTION';
 
     if (mediaPayloads.length === 0) {
-      result = await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons });
+      result = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons });
       if (hasText) {
         providerTextMessageId = result.messageId;
         providerTextKind = 'TEXT';
       }
-    } else if (
-      mediaPayloads.length >= 2 &&
-      mediaPayloads.every((item) => item.kind === 'photo') &&
-      inlineButtons.length === 0 &&
-      typeof provider.sendMediaGroup === 'function'
-    ) {
-      // Telegram and Bale expose official media-album endpoints. Long text is
-      // sent as a separate message and its ID is retained for later edits.
+    } else if (shouldUseMediaGroup(platform, {
+      providerSupportsMediaGroup: typeof provider.sendMediaGroup === 'function',
+      mediaCount: mediaPayloads.length,
+      allPhotos: mediaPayloads.every((item) => item.kind === 'photo'),
+      hasInlineButtons: inlineButtons.length > 0,
+    })) {
+      // Telegram keeps its documented album behavior. Bale intentionally uses
+      // sequential sendPhoto calls so every channel item remains an independent
+      // message with its own native share / magazine / story actions.
       result = await provider.sendMediaGroup(token, {
-        chatRef: channel.channelRef,
+        chatRef: providerChatRef,
         text: hasText && fitsMediaCaption ? text : '',
         parseMode,
         media: mediaPayloads.map((item) => ({
@@ -410,14 +417,14 @@ async function deliverPost(targetId: string): Promise<void> {
         providerTextMessageId = result.messageId;
         providerTextKind = 'CAPTION';
       } else if (hasText) {
-        const textResult = await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons: [] });
+        const textResult = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons: [] });
         providerTextMessageId = textResult.messageId;
         providerTextKind = 'TEXT';
       }
     } else if (mediaPayloads.length === 1) {
       const item = mediaPayloads[0]!;
       result = await provider.sendMedia(token, {
-        chatRef: channel.channelRef,
+        chatRef: providerChatRef,
         text: hasText && fitsMediaCaption ? text : '',
         parseMode: hasText && fitsMediaCaption ? parseMode : 'NONE',
         inlineButtons: hasText && fitsMediaCaption ? inlineButtons : [],
@@ -430,7 +437,7 @@ async function deliverPost(targetId: string): Promise<void> {
         providerTextMessageId = result.messageId;
         providerTextKind = mediaCaptionKind;
       } else if (hasText) {
-        const textResult = await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons });
+        const textResult = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons });
         providerTextMessageId = textResult.messageId;
         providerTextKind = 'TEXT';
       }
@@ -442,7 +449,7 @@ async function deliverPost(targetId: string): Promise<void> {
         const item = mediaPayloads[index]!;
         try {
           const sent = await provider.sendMedia(token, {
-            chatRef: channel.channelRef,
+            chatRef: providerChatRef,
             text: index === 0 && hasText && fitsMediaCaption ? text : '',
             parseMode: index === 0 && hasText && fitsMediaCaption ? parseMode : 'NONE',
             inlineButtons: index === 0 && hasText && fitsMediaCaption ? inlineButtons : [],
@@ -462,7 +469,7 @@ async function deliverPost(targetId: string): Promise<void> {
         providerTextKind = mediaCaptionKind;
       } else if (hasText) {
         try {
-          const textResult = await provider.sendText(token, { chatRef: channel.channelRef, text, parseMode, inlineButtons });
+          const textResult = await provider.sendText(token, { chatRef: providerChatRef, text, parseMode, inlineButtons });
           providerTextMessageId = textResult.messageId;
           providerTextKind = 'TEXT';
         } catch (err) {
@@ -475,7 +482,7 @@ async function deliverPost(targetId: string): Promise<void> {
 
     await finalizeSuccess(target, post, channel, platform, result.messageId, undefined, {
       providerBotId,
-      providerChatRef: channel.channelRef,
+      providerChatRef,
       providerTextMessageId,
       providerTextKind,
       providerText: hasText ? text : null,
